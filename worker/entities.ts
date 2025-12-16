@@ -1,6 +1,7 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent } from "@shared/types";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
+import { v4 as uuidv4 } from 'uuid';
 export class RateLimitEntity extends IndexedEntity<RateLimitState> {
   static readonly entityName = "ratelimit";
   static readonly indexName = "ratelimits";
@@ -27,42 +28,56 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
   static readonly indexName = 'durindexes';
   static readonly singletonId = 'global';
   static readonly initialState: DurabilityIndexState = { id: 'global', lastProcessed: '', seenEvents: [] };
+  static async appendToR2WAL(env: Env, key: string, content: string): Promise<void> {
+    const di = new this(env, this.singletonId);
+    await di.stub.casPut('r2-wal/' + key, 0, content);
+  }
+  static async listR2WAL(env: Env, prefix?: string, after?: string): Promise<{ keys: string[]; next: string | null; }> {
+    const di = new this(env, this.singletonId);
+    return di.stub.listPrefix('r2-wal/' + (prefix || ''), after);
+  }
+  static async getR2WAL(env: Env, key: string): Promise<string | null> {
+    const di = new this(env, this.singletonId);
+    const doc = await di.stub.getDoc<string>('r2-wal/' + key);
+    return doc?.data ?? null;
+  }
   static async ensureSeed(env: Env): Promise<void> {
     const di = new this(env, this.singletonId);
     if (!(await di.exists())) {
       await di.save(this.initialState);
-      // Seed test WAL events only on first creation
-      const testEvents: WALEvent[] = [
-        { _id: 'test-traffic-1', _seq: Date.now(), feedId: 'f1', payload: {speed: 65, location: 'Test Route 22'}, timestamp: new Date().toISOString() },
-        { _id: 'test-weather-1', _seq: Date.now() + 1, feedId: 'f2', payload: {temp: 72, condition: 'Clear'}, timestamp: new Date().toISOString() },
-        { _id: 'test-safety-1', _seq: Date.now() + 2, feedId: 'f3', payload: {event: 'Test Dispatch', unit: '101'}, timestamp: new Date().toISOString() },
+      const testEvents: IngestEvent[] = [
+        { idempotencyKey: 'test-traffic-1', feedId: 'f1', payload: {speed: 65, location: 'Test Route 22'}, clientSeq: Date.now() },
+        { idempotencyKey: 'test-weather-1', feedId: 'f2', payload: {temp: 72, condition: 'Clear'}, clientSeq: Date.now() + 1 },
+        { idempotencyKey: 'test-safety-1', feedId: 'f3', payload: {event: 'Test Dispatch', unit: '101'}, clientSeq: Date.now() + 2 },
       ];
-      const day = new Date().toISOString().slice(0,10);
       for (const event of testEvents) {
-        const walKey = `wal/${day}/${event._seq}.${event._id}`;
-        await di.appendWAL(walKey, event);
+        const day = new Date().toISOString().slice(0,10);
+        const ts = event.clientSeq || Date.now();
+        const id = event.idempotencyKey || uuidv4();
+        const walKey = `wal/${day}/${ts}.${id}.json`;
+        const walEvent: WALEvent = {
+          _id: id,
+          _seq: ts,
+          feedId: event.feedId,
+          payload: event.payload,
+          timestamp: new Date().toISOString()
+        };
+        await this.appendToR2WAL(env, walKey, JSON.stringify(walEvent));
       }
     }
   }
-  static async listWALKeys(env: Env, after?: string): Promise<{ keys: string[]; next: string | null }> {
-    const di = new this(env, this.singletonId);
-    return di.stub.listPrefix('wal/', after);
-  }
-  async appendWAL(key: string, event: WALEvent): Promise<void> {
-    // Use casPut with version 0 to ensure this is a new, unversioned entry.
-    await this.stub.casPut(key, 0, event);
-  }
-  async listWALKeys(afterKey?: string): Promise<string[]> {
-    const res = await this.stub.listPrefix('wal/', afterKey);
-    return res.keys;
-  }
-  async getWALEvent(key: string): Promise<WALEvent | null> {
-    const doc = await this.stub.getDoc<WALEvent>(key);
-    return doc?.data ?? null;
+  async getR2WALEvent(key: string): Promise<WALEvent | null> {
+    const content = await DurabilityIndexEntity.getR2WAL(this.env, key);
+    try {
+      return content ? JSON.parse(content) as WALEvent : null;
+    } catch (e) {
+      console.error(`Failed to parse WAL event for key ${key}:`, e);
+      return null;
+    }
   }
   async processEvent(key: string): Promise<boolean> {
-    const event = await this.getWALEvent(key);
-    if (!event) return false;
+    const event = await this.getR2WALEvent(key);
+    if (!event || !event._id) return false;
     const s = await this.getState();
     if (s.seenEvents.includes(event._id)) return false;
     await FeedEntity.ingest(this.env, event.feedId, event.payload);
@@ -72,15 +87,20 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
     }));
     return true;
   }
-  async replay(): Promise<number> {
+  async applyWAL(): Promise<number> {
     const s = await this.getState();
-    const keys = await this.listWALKeys(s.lastProcessed ?? undefined);
+    const { keys } = await DurabilityIndexEntity.listR2WAL(this.env, 'wal/', s.lastProcessed || undefined);
     let processed = 0;
     for (const key of keys) {
-      if (await this.processEvent(key)) processed++;
+      // listPrefix returns the full key including 'r2-wal/', so we strip it.
+      const relativeKey = key.startsWith('r2-wal/') ? key.substring(7) : key;
+      if (await this.processEvent(relativeKey)) {
+        processed++;
+      }
     }
     if (keys.length > 0) {
-      await this.patch({ lastProcessed: keys[keys.length - 1] });
+      const lastKey = keys[keys.length - 1];
+      await this.patch({ lastProcessed: lastKey });
     }
     return processed;
   }
@@ -110,7 +130,7 @@ export class CoordinatorEntity extends IndexedEntity<CoordinatorState> {
   }
   async computeStats(): Promise<FeedStats & { velocity: VelocityDataPoint[] }> {
     const di = new DurabilityIndexEntity(this.env, DurabilityIndexEntity.singletonId);
-    await di.replay();
+    await di.applyWAL();
     const { items: feeds } = await FeedEntity.list(this.env, null, 500);
     const s = await this.getState();
     const totalFeeds = feeds.length;

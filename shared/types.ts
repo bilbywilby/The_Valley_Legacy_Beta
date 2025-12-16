@@ -67,3 +67,10 @@ export interface WALStats {
   lastProcessed: string;
   totalSeen: number;
 }
+export interface IngestEvent {
+  feedId: string;
+  payload: Record<string, any>;
+  idempotencyKey?: string;
+  clientSeq?: number;
+}
+export type R2WALContent = string; // JSON string for simulated R2 objects

@@ -11,24 +11,24 @@ export function WALPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery<WALListResponse>({
     queryKey: ['wal'],
-    queryFn: () => api('/api/wal'),
+    queryFn: () => api('/api/list-wal'),
     refetchInterval: 20000,
   });
-  const replayMutation = useMutation({
-    mutationFn: () => api<WALStats>('/api/wal/replay', { method: 'POST' }),
+  const applyMutation = useMutation({
+    mutationFn: () => api<WALStats>('/api/apply-wal', { method: 'POST' }),
     onSuccess: (stats) => {
-      toast.success(`Replay complete. Processed ${stats.processed} new events.`);
+      toast.success(`Apply complete. Processed ${stats.processed} new events.`);
       queryClient.invalidateQueries({ queryKey: ['wal'] });
       queryClient.invalidateQueries({ queryKey: ['coordinatorStats'] });
       queryClient.invalidateQueries({ queryKey: ['feeds'] });
     },
     onError: () => {
-      toast.error('Failed to trigger WAL replay.');
+      toast.error('Failed to trigger WAL apply.');
     },
   });
-  const handleReplay = () => {
-    toast.info('Triggering WAL replay...');
-    replayMutation.mutate();
+  const handleApply = () => {
+    toast.info('Triggering WAL apply...');
+    applyMutation.mutate();
   };
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -97,26 +97,26 @@ export function WALPage() {
           <div>
             <Card className="bg-slate-950/50 border-slate-800 sticky top-24">
               <CardHeader>
-                <CardTitle>Manual Replay</CardTitle>
+                <CardTitle>Manual Apply</CardTitle>
                 <CardDescription>
                   Force the system to process all unprocessed WAL keys. This is useful for recovery or manual synchronization.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Button
-                  onClick={handleReplay}
-                  disabled={replayMutation.isPending}
+                  onClick={handleApply}
+                  disabled={applyMutation.isPending}
                   className="w-full"
                 >
                   <PlayCircle className="h-4 w-4 mr-2" />
-                  {replayMutation.isPending ? 'Replaying...' : 'Trigger Replay'}
+                  {applyMutation.isPending ? 'Applying...' : 'Trigger Apply'}
                 </Button>
-                {replayMutation.data && (
+                {applyMutation.data && (
                   <div className="mt-4 text-sm text-muted-foreground space-y-2">
-                    <p><strong>Last Replay Stats:</strong></p>
-                    <p>Processed: {replayMutation.data.processed}</p>
-                    <p>Total Seen: {replayMutation.data.totalSeen}</p>
-                    <p className="truncate">Last Key: {replayMutation.data.lastProcessed || 'N/A'}</p>
+                    <p><strong>Last Apply Stats:</strong></p>
+                    <p>Processed: {applyMutation.data.processed}</p>
+                    <p>Total Seen: {applyMutation.data.totalSeen}</p>
+                    <p className="truncate">Last Key: {applyMutation.data.lastProcessed || 'N/A'}</p>
                   </div>
                 )}
               </CardContent>
