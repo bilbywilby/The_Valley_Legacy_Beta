@@ -1,6 +1,6 @@
 import { IndexedEntity, Env } from "./core-utils";
 import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse } from "@shared/types";
-import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
+import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
 // Define Doc type locally to assist TypeScript inference where needed.
 type Doc<T> = { v: number; data: T };
@@ -47,14 +47,18 @@ export class RateLimitEntity extends IndexedEntity<RateLimitState> {
     return s.count >= limit;
   }
 }
-export class VectorShardEntity extends IndexedEntity<{shardId: string, events: VectorizedEvent[]}> {
+export class VectorShardEntity extends IndexedEntity<{id: string, events: VectorizedEvent[]}> {
   static readonly entityName = 'vectorshard';
   static readonly indexName = 'vectorshards';
-  static readonly initialState = {shardId:'', events:[]};
-  static async ingest(env: Env, shardId: string, event: VectorizedEvent): Promise<void> {
-    const shard = new this(env, shardId);
+  static readonly initialState = {id:'', events:[]};
+  static seedData = MOCK_VECTOR_SHARDS;
+  static async ensureSeed(env: Env): Promise<void> {
+    await super.ensureSeed(env);
+  }
+  static async ingest(env: Env, id: string, event: VectorizedEvent): Promise<void> {
+    const shard = new this(env, id);
     if (!(await shard.exists())) {
-      await shard.save({ shardId, events: [] });
+      await shard.save({ id, events: [] });
     }
     await shard.mutate(s => ({
       ...s,
@@ -90,7 +94,7 @@ export class VectorIndexCoordinatorEntity extends IndexedEntity<{id:string}> {
     const { items: shards } = await VectorShardEntity.list(env, null, 100);
     const allResults: SearchResult[] = [];
     const searchPromises = shards.map(async (shardState) => {
-      const shard = new VectorShardEntity(env, shardState.shardId);
+      const shard = new VectorShardEntity(env, shardState.id);
       return shard.search(queryEmbedding, params.limit || 10, params.threshold || 0.7);
     });
     const resultsByShard = await Promise.all(searchPromises);
