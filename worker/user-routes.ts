@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { Env } from './core-utils';
-import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity } from "./entities";
+import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity, BM25IndexEntity } from "./entities";
 import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
 import { v4 as uuidv4 } from 'uuid';
-import { WALEvent, WALStats, IngestEvent, VectorizedEvent } from "@shared/types";
+import { WALEvent, WALStats, IngestEvent, VectorizedEvent, SearchResponse } from "@shared/types";
 // This is a simplified version of the generateEmbedding function for use in routes.
 // The full version with crypto is in entities.ts.
 async function generateEmbeddingRoute(input: string): Promise<number[]> {
@@ -51,13 +51,14 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/*', rateLimit);
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic']));
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search']));
   // Ensure seed data is present on first load
   app.use('/api/*', async (c, next) => {
     await FeedEntity.ensureSeed(c.env);
     await CoordinatorEntity.ensureSeed(c.env);
     await DurabilityIndexEntity.ensureSeed(c.env);
     await VectorIndexCoordinatorEntity.ensureSeed(c.env);
+    await BM25IndexEntity.ensureSeed(c.env);
     await next();
   });
   // --- DEPRECATED ROUTES (kept for compatibility, now point to coordinator) ---
@@ -114,16 +115,29 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   });
   app.get('/api/query-semantic', async (c) => {
     const text = c.req.query('text');
-    if (!isStr(text)) return bad(c, 'text required');
-    const limit = parseInt(c.req.query('limit') || '10');
+    if (!isStr(text)) return bad(c, 'text is required');
+    const params = new URLSearchParams({ q: text, beta: '1.0', alpha: '0.0' });
+    return c.redirect(`/api/search?${params.toString()}`);
+  });
+  app.get('/api/search', async (c) => {
+    const q = c.req.query('q');
+    if (!isStr(q)) return bad(c, 'q is required');
+    const alpha = parseFloat(c.req.query('alpha') || '0.5');
+    const beta = parseFloat(c.req.query('beta') || '0.5');
+    const limit = parseInt(c.req.query('limit') || '20');
     const threshold = parseFloat(c.req.query('threshold') || '0.7');
-    console.time('query-semantic');
+    const startTime = Date.now();
     const coord = new VectorIndexCoordinatorEntity(c.env, VectorIndexCoordinatorEntity.singletonId);
-    const resp = await coord.querySemantic(c.env, { text, limit, threshold });
-    console.timeEnd('query-semantic');
-    if (resp.total === 0) console.log('Benchmark: Empty query');
-    else if (resp.results.length > 0 && resp.results[0]?.score < 0.5) console.log('Benchmark: Low relevance');
-    return ok(c, resp);
+    const bm25Candidates = await BM25IndexEntity.searchCandidates(c.env, BM25IndexEntity.tokenizer(q), 50);
+    const fused = await coord.queryHybrid(c.env, { q, alpha, beta, limit, threshold });
+    const fusionLat = Date.now() - startTime;
+    console.log(`BM25 hits: ${bm25Candidates.length}, Fusion latency: ${fusionLat}ms`);
+    const response: SearchResponse = {
+      ...fused,
+      bm25Hits: bm25Candidates.length,
+      fusionLat,
+    };
+    return ok(c, response);
   });
   // Feeds List
   app.get('/api/feeds', async (c) => {
