@@ -3,6 +3,11 @@ export interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
 }
+export interface HistoryItem {
+  timestamp: string; // ISO 8601 string
+  payload: Record<string, any>;
+  severity?: 'critical' | 'high' | 'medium' | 'low' | 'info';
+}
 export interface FeedItem {
   id: string;
   name: string;
@@ -10,6 +15,14 @@ export interface FeedItem {
   status: 'Online' | 'Degraded' | 'Offline';
   region: string;
   lastUpdate: string; // ISO 8601 string
+}
+export interface FeedState extends FeedItem {
+  history: HistoryItem[];
+  ingestionRate: number;
+  totalEvents: number;
+}
+export interface FeedDetailResponse {
+  feed: FeedState;
 }
 export interface FeedStats {
   totalFeeds: number;
