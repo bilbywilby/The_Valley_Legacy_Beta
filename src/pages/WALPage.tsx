@@ -13,8 +13,8 @@ export function WALPage() {
   const queryClient = useQueryClient();
   const [prefix, setPrefix] = useState('');
   const [after, setAfter] = useState('');
-  const { data, isLoading, error } = useQuery<WALListResponse>({
-    queryKey: ['wal', { prefix, after }],
+    const { data, isLoading, error } = useQuery<WALListResponse>({
+      queryKey: ['wal', prefix, after],
     queryFn: () => {
       const params = new URLSearchParams();
       if (prefix) params.set('prefix', prefix);
@@ -22,7 +22,7 @@ export function WALPage() {
       const queryString = params.toString();
       return api(`/api/list-wal${queryString ? `?${queryString}` : ''}`);
     },
-    refetchInterval: 20000,
+    refetchInterval: 30000,
   });
   const applyMutation = useMutation({
     mutationFn: () => api<WALStats>('/api/apply-wal', { method: 'POST' }),
@@ -131,11 +131,11 @@ export function WALPage() {
               <CardContent>
                 <Button
                   onClick={handleApply}
-                  disabled={applyMutation.isPending}
+                  disabled={applyMutation.isLoading}
                   className="w-full"
                 >
                   <PlayCircle className="h-4 w-4 mr-2" />
-                  {applyMutation.isPending ? 'Applying...' : 'Trigger Apply'}
+                  {applyMutation.isLoading ? 'Applying...' : 'Trigger Apply'}
                 </Button>
                 {applyMutation.data && (
                   <div className="mt-4 text-sm text-muted-foreground space-y-2">
