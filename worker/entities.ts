@@ -1,6 +1,6 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result } from "@shared/types";
-import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS } from "@shared/mock-data";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result, PulseMetrics } from "@shared/types";
+import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS, MOCK_H3_PULSE } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
 // Define Doc type locally to assist TypeScript inference where needed.
 type Doc<T> = { v: number; data: T };
@@ -175,6 +175,34 @@ export class VectorIndexCoordinatorEntity extends IndexedEntity<{id:string}> {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
     return { results: finalResults, total: finalResults.length };
+  }
+}
+export class PulseEntity extends IndexedEntity<{id: string, hexMetrics: Record<string, PulseMetrics>}> {
+  static readonly entityName = 'pulse';
+  static readonly indexName = 'pulses';
+  static readonly singletonId = 'global';
+  static readonly initialState = {id: 'global', hexMetrics: {}};
+  static async ensureSeed(env: Env): Promise<void> {
+    const pulse = new this(env, this.singletonId);
+    if (!(await pulse.exists())) {
+      await pulse.save({ ...this.initialState, hexMetrics: MOCK_H3_PULSE });
+    }
+  }
+  async getMetrics(hex: string, period: '24h' | '7d'): Promise<PulseMetrics | null> {
+    const s = await this.getState();
+    // In a real implementation, we would aggregate data here.
+    // For now, we return mock data or generate it on the fly.
+    const stored = s.hexMetrics[hex];
+    if (stored) return { ...stored, period };
+    // Generate mock data if not found
+    return {
+      hex,
+      period,
+      safetyZ: parseFloat((Math.random() * 4 - 2).toFixed(2)),
+      eventsZ: parseFloat((Math.random() * 4 - 2).toFixed(2)),
+      trafficZ: parseFloat((Math.random() * 4 - 2).toFixed(2)),
+      lastUpdated: new Date().toISOString(),
+    };
   }
 }
 export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {

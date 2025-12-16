@@ -1,4 +1,4 @@
-import type { FeedItem, FeedStats, VelocityDataPoint, HistoryItem, VectorizedEvent } from './types';
+import type { FeedItem, FeedStats, VelocityDataPoint, HistoryItem, VectorizedEvent, PulseMetrics } from './types';
 export const MOCK_FEEDS: FeedItem[] = [
   { id: 'f1', name: 'Traffic - Route 22 West', type: 'Traffic', status: 'Online', region: 'Lehigh County', lastUpdate: new Date(Date.now() - 2 * 60 * 1000).toISOString() },
   { id: 'f2', name: 'Weather - Allentown', type: 'Weather', status: 'Online', region: 'Lehigh County', lastUpdate: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
@@ -89,3 +89,31 @@ export const MOCK_VECTOR_SHARDS: { id: string; events: VectorizedEvent[] }[] = [
     })),
   },
 ];
+export const MOCK_H3_PULSE: Record<string, PulseMetrics> = {
+  'demo-h3-lehigh-001': {
+    hex: 'demo-h3-lehigh-001',
+    period: '24h',
+    safetyZ: 1.8,
+    eventsZ: -0.5,
+    trafficZ: 0.2,
+    lastUpdated: new Date().toISOString(),
+  },
+  'demo-h3-northampton-002': {
+    hex: 'demo-h3-northampton-002',
+    period: '24h',
+    safetyZ: -1.1,
+    eventsZ: 2.3,
+    trafficZ: 1.5,
+    lastUpdated: new Date().toISOString(),
+  },
+};
+export const MOCK_CRED_SCORES: Record<string, { score: number, factors: any }> = {
+  'mock-traffic-1': {
+    score: 85,
+    factors: { sources: 2, corroborations: 5, ageHours: 1 },
+  },
+  'test-safety-1': {
+    score: 92,
+    factors: { sources: 1, corroborations: 10, ageHours: 0.5 },
+  },
+};

@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { Env } from './core-utils';
-import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity, BM25IndexEntity } from "./entities";
+import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity, BM25IndexEntity, PulseEntity } from "./entities";
 import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
 import { v4 as uuidv4 } from 'uuid';
-import { WALEvent, WALStats, IngestEvent, VectorizedEvent, SearchResponse } from "@shared/types";
+import { WALEvent, WALStats, IngestEvent, VectorizedEvent, SearchResponse, CredResponse } from "@shared/types";
 // This is a simplified version of the generateEmbedding function for use in routes.
 // The full version with crypto is in entities.ts.
 async function generateEmbeddingRoute(input: string): Promise<number[]> {
@@ -15,7 +15,7 @@ async function generateEmbeddingRoute(input: string): Promise<number[]> {
   }
   return vector;
 }
-// --- Infographic Generation Logic ---
+// --- Infographic & Tile Generation Logic ---
 const RSS_SOURCES: Record<string, string[]> = {
   news: [
     'https://www.mcall.com/arcio/arc/outboundfeeds/rss/?topic=news&outputType=xml',
@@ -44,18 +44,16 @@ const SENTIMENT_WORDS = {
   negative: new Set(['bad', 'crash', 'crime', 'warning', 'outage', 'fatal', 'delay', 'problem', 'concern'])
 };
 const escapeXML = (str: string) => str.replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c] || c));
-function generateErrorSVG(message: string): string {
-  return `<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+function generateErrorSVG(message: string, width = 800, height = 400): string {
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
     <style>.title { font-size: 24px; font-weight: bold; fill: #ff6b6b; } .msg { font-size: 18px; fill: #f1f5f9; }</style>
     <rect width="100%" height="100%" fill="#1e293b" />
-    <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" class="title">Infographic Error</text>
+    <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" class="title">Error</text>
     <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" class="msg">${escapeXML(message)}</text>
   </svg>`;
 }
 function generateInfographicSVG(stats: { topicCounts: Record<string, number>, sentiment: { positive: number, negative: number }, topHeadlines: string[], period: string, source: string }): string {
   const { topicCounts, sentiment, topHeadlines, period, source } = stats;
-  const totalTopics = Object.values(topicCounts).reduce((a, b) => a + b, 0);
-  const totalSentiment = sentiment.positive + sentiment.negative;
   const barData = Object.entries(topicCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const barWidth = 100;
   const barSpacing = 40;
@@ -97,6 +95,36 @@ function generateInfographicSVG(stats: { topicCounts: Record<string, number>, se
     <text x="50" y="440" class="headline-text">${headlines}</text>
   </svg>`;
 }
+function generateTileSVG(stats: { topicCounts: Record<string, number>, window: string }): string {
+  const { topicCounts, window } = stats;
+  const barData = Object.entries(topicCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const barWidth = 80;
+  const barSpacing = 20;
+  const chartHeight = 150;
+  const maxCount = Math.max(1, ...barData.map(d => d[1]));
+  const bars = barData.map(([topic, count], i) => {
+    const height = (count / maxCount) * chartHeight;
+    const x = 40 + i * (barWidth + barSpacing);
+    const y = 220 - height;
+    return `<g>
+      <rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="url(#grad)" rx="4" />
+      <text x="${x + barWidth / 2}" y="${y - 8}" text-anchor="middle" fill="#f1f5f9" font-size="14" font-weight="bold">${count}</text>
+      <text x="${x + barWidth / 2}" y="235" text-anchor="middle" fill="#94a3b8" font-size="12">${escapeXML(topic)}</text>
+    </g>`;
+  }).join('');
+  return `<svg width="400" height="300" viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+    <defs>
+      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" /><stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <style>.title { font-size: 22px; font-weight: bold; fill: #f1f5f9; } .subtitle { font-size: 14px; fill: #94a3b8; }</style>
+    <rect width="100%" height="100%" fill="#0f172a" rx="8" stroke="#334155" />
+    <text x="200" y="35" text-anchor="middle" class="title">Topic Velocity</text>
+    <text x="200" y="60" text-anchor="middle" class="subtitle">Last ${escapeXML(window)}</text>
+    <g>${bars}</g>
+  </svg>`;
+}
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
@@ -133,8 +161,19 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/*', rateLimit);
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search']));
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search', '/api/pulse', '/api/cred']));
   app.use('/infographic.svg', async (c, next) => {
+    const cache = (caches as any).default;
+    const response = await cache.match(c.req.raw);
+    if (response) return response;
+    await next();
+    if (c.res.ok) {
+      const resClone = c.res.clone();
+      resClone.headers.set('Cache-Control', 's-maxage=3600'); // 1 hour cache
+      c.executionCtx.waitUntil(cache.put(c.req.raw, resClone));
+    }
+  });
+  app.use('/tile.svg', async (c, next) => {
     const cache = (caches as any).default;
     const response = await cache.match(c.req.raw);
     if (response) return response;
@@ -152,6 +191,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     await DurabilityIndexEntity.ensureSeed(c.env);
     await VectorIndexCoordinatorEntity.ensureSeed(c.env);
     await BM25IndexEntity.ensureSeed(c.env);
+    await PulseEntity.ensureSeed(c.env);
     await next();
   });
   // --- Infographic Route ---
@@ -214,6 +254,81 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
       console.timeEnd('gen_infographic');
       return c.body(generateErrorSVG(e.message), 500, { 'Content-Type': 'image/svg+xml' });
     }
+  });
+  // --- NEW Hyperlocal Civic APIs ---
+  app.get('/tile.svg', async (c) => {
+    console.time('gen_tile');
+    try {
+      const window = c.req.query('window') || '7d';
+      const query = c.req.query('query') || 'topics';
+      const days = parseInt(window.replace('d', '')) || 7;
+      const since = Date.now() - days * 24 * 60 * 60 * 1000;
+      const urls = RSS_SOURCES['all'];
+      const responses = await Promise.all(urls.map(url => fetch(url, { headers: { 'User-Agent': 'ValleyScope-Tile-Bot/1.0' } })));
+      const allItems: { title: string }[] = [];
+      for (const response of responses) {
+        if (!response.ok) continue;
+        const xml = await response.text();
+        const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+        for (const item of items) {
+          const titleMatch = item[1].match(/<title><!\[CDATA\[(.*?)\]\]>|<\/title>/) || item[1].match(/<title>(.*?)<\/title>/);
+          const dateMatch = item[1].match(/<pubDate>(.*?)<\/pubDate>/);
+          if (titleMatch?.[1] && dateMatch?.[1] && new Date(dateMatch[1]).getTime() > since) {
+            allItems.push({ title: titleMatch[1].trim() });
+          }
+        }
+      }
+      const topicCounts: Record<string, number> = {};
+      for (const { title } of allItems) {
+        const tokens = title.toLowerCase().split(/\W+/).filter(t => t.length > 2 && !STOPWORDS.has(t));
+        for (const token of tokens) {
+          for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
+            if (keywords.includes(token)) {
+              topicCounts[topic] = (topicCounts[topic] || 0) + 1;
+            }
+          }
+        }
+      }
+      const svg = generateTileSVG({ topicCounts, window });
+      console.timeEnd('gen_tile');
+      return c.body(svg, 200, { 'Content-Type': 'image/svg+xml' });
+    } catch (e: any) {
+      console.error('Tile generation failed:', e.message);
+      console.timeEnd('gen_tile');
+      return c.body(generateErrorSVG(e.message, 400, 300), 500, { 'Content-Type': 'image/svg+xml' });
+    }
+  });
+  app.get('/api/pulse', async (c) => {
+    const hex = c.req.query('hex');
+    const period = c.req.query('period') || '24h';
+    if (!isStr(hex)) return bad(c, 'hex is required');
+    if (period !== '24h' && period !== '7d') return bad(c, 'period must be 24h or 7d');
+    const pulse = new PulseEntity(c.env, PulseEntity.singletonId);
+    const metrics = await pulse.getMetrics(hex, period);
+    if (!metrics) return notFound(c, 'Metrics not found for this hex');
+    return ok(c, metrics);
+  });
+  app.get('/api/cred', async (c) => {
+    const itemId = c.req.query('item_id');
+    if (!isStr(itemId)) return bad(c, 'item_id is required');
+    const di = new DurabilityIndexEntity(c.env, DurabilityIndexEntity.singletonId);
+    const s = await di.getState();
+    const corroborations = s.seenEvents.filter(id => id.startsWith(itemId.split('-')[0])).length;
+    const { items: feeds } = await FeedEntity.list(c.env, null, 500);
+    const sources = feeds.length;
+    // Mock age and score calculation
+    const ageHours = Math.random() * 24;
+    const score = Math.min(100, 50 + (corroborations * 5) + (sources * 2) - (ageHours * 2));
+    const response: CredResponse = {
+      itemId,
+      score: Math.round(score),
+      factors: {
+        sources,
+        corroborations,
+        ageHours: parseFloat(ageHours.toFixed(1)),
+      },
+    };
+    return ok(c, response);
   });
   // --- DEPRECATED ROUTES (kept for compatibility, now point to coordinator) ---
   app.get('/api/dashboard/stats', async (c) => {
