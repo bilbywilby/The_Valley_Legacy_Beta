@@ -1,4 +1,4 @@
-import { LayoutDashboard, Radio, Settings, Signal } from "lucide-react";
+import { LayoutDashboard, Radio, Database } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import {
   Sidebar,
@@ -6,9 +6,9 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
-  SidebarMenuButton,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
+import { Signal } from "lucide-react";
 const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
   cn(
     "flex items-center gap-3 rounded-lg px-3 py-2 text-sidebar-foreground transition-all hover:text-sidebar-primary-foreground",
@@ -35,6 +35,12 @@ export function AppSidebar(): JSX.Element {
             <NavLink to="/feeds" className={navLinkClasses}>
               <Radio className="h-4 w-4" />
               Feed Explorer
+            </NavLink>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <NavLink to="/wal" className={navLinkClasses}>
+              <Database className="h-4 w-4" />
+              WAL Explorer
             </NavLink>
           </SidebarMenuItem>
         </SidebarMenu>

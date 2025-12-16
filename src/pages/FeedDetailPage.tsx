@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, BarChart, Clock, Database, Rss, FileJson, Send } from 'lucide-react';
+import { ArrowLeft, BarChart, Clock, Database, Rss, FileJson, Send, Download } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Pie, PieChart, Cell, Legend } from 'recharts';
@@ -16,6 +16,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { Toaster, toast } from 'sonner';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 const StatCard = ({ title, value, icon, isLoading }: { title: string, value: string | number, icon: React.ReactNode, isLoading?: boolean }) => (
   <Card className="bg-slate-950/50 border-slate-800">
     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -36,6 +37,17 @@ const StatusBadge = ({ status }: { status: 'Online' | 'Degraded' | 'Offline' }) 
   return <Badge variant="outline" className={cn('capitalize', statusClasses[status])}>{status}</Badge>;
 };
 const SEVERITY_COLORS = { critical: '#f43f5e', high: '#f97316', medium: '#f59e0b', low: '#84cc16', info: '#3b82f6' };
+function downloadFile(content: string, fileName: string, contentType: string) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 export function FeedDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
@@ -53,7 +65,7 @@ export function FeedDetailPage() {
     onSuccess: () => {
       toast.success('Event ingested successfully!');
       queryClient.invalidateQueries({ queryKey: ['feed', id] });
-      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+      queryClient.invalidateQueries({ queryKey: ['coordinatorStats'] });
     },
     onError: () => {
       toast.error('Failed to ingest event.');
@@ -68,8 +80,31 @@ export function FeedDetailPage() {
     };
     ingestMutation.mutate(mockPayload);
   };
+  const handleExport = (format: 'csv' | 'json') => {
+    const history = data?.feed?.history ?? [];
+    if (history.length === 0) {
+      toast.warning('No history to export.');
+      return;
+    }
+    const fileName = `feed_${id}_history_${new Date().toISOString()}.${format}`;
+    if (format === 'json') {
+      const jsonContent = JSON.stringify(history, null, 2);
+      downloadFile(jsonContent, fileName, 'application/json');
+    } else {
+      const header = 'timestamp,severity,payload\n';
+      const rows = history.map(item => {
+        const timestamp = `"${item.timestamp}"`;
+        const severity = `"${item.severity || 'info'}"`;
+        const payload = `"${JSON.stringify(item.payload).replace(/"/g, '""')}"`;
+        return [timestamp, severity, payload].join(',');
+      }).join('\n');
+      const csvContent = header + rows;
+      downloadFile(csvContent, fileName, 'text/csv');
+    }
+    toast.success(`History exported as ${format.toUpperCase()}`);
+  };
   const feed = data?.feed;
-  const severityData = feed?.history?.reduce((acc, item) => {
+  const severityData = (feed?.history ?? []).reduce((acc, item) => {
     const severity = item.severity || 'info';
     const existing = acc.find(d => d.name === severity);
     if (existing) {
@@ -78,24 +113,46 @@ export function FeedDetailPage() {
       acc.push({ name: severity, value: 1 });
     }
     return acc;
-  }, [] as { name: string, value: number }[]) ?? [];
-  const overviewChartData = (feed?.history || [])
+  }, [] as { name: string, value: number }[]);
+  const overviewChartData = (feed?.history ?? [])
     .slice(0, 20)
     .reverse()
     .map(item => ({
       timestamp: item.timestamp,
-      speed: item.payload?.speed ? parseFloat(item.payload.speed) : null,
-      temp: item.payload?.temp ? parseFloat(item.payload.temp) : null,
+      speed: item.payload?.speed ? parseFloat(String(item.payload.speed).split(' ')[0]) : null,
+      temp: item.payload?.temp ? parseFloat(String(item.payload.temp).split('°')[0]) : null,
     }));
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <Toaster richColors theme="dark" />
       <div className="py-8 md:py-10 lg:py-12">
         <header className="mb-8">
-          <Link to="/feeds" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-4">
-            <ArrowLeft className="h-4 w-4" />
-            Back to Feed Explorer
-          </Link>
+          <div className="flex justify-between items-start">
+            <Link to="/feeds" className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-4">
+              <ArrowLeft className="h-4 w-4" />
+              Back to Feed Explorer
+            </Link>
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="sm" disabled={!feed}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Export History
+                </Button>
+              </SheetTrigger>
+              <SheetContent>
+                <SheetHeader>
+                  <SheetTitle>Export Feed History</SheetTitle>
+                  <SheetDescription>
+                    Download the complete event history for this feed in your desired format.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="grid gap-4 py-4">
+                  <Button onClick={() => handleExport('csv')}>Download as CSV</Button>
+                  <Button onClick={() => handleExport('json')}>Download as JSON</Button>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
           {isLoading ? (
             <>
               <Skeleton className="h-9 w-3/4" />
@@ -164,7 +221,7 @@ export function FeedDetailPage() {
                     <ResponsiveContainer width="100%" height={300}>
                       <PieChart>
                         <Pie data={severityData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
-                          {severityData?.map((entry, index) => (
+                          {(severityData ?? []).map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={SEVERITY_COLORS[entry.name as keyof typeof SEVERITY_COLORS] || '#8884d8'} />
                           ))}
                         </Pie>
@@ -188,7 +245,7 @@ export function FeedDetailPage() {
                 <CardContent>
                   <ScrollArea className="h-[400px] w-full rounded-md border border-slate-800 p-4 font-mono text-sm">
                     <Accordion type="single" collapsible>
-                      {feed?.history.map((item, index) => (
+                      {(feed?.history ?? []).map((item, index) => (
                         <AccordionItem value={`item-${index}`} key={item.timestamp + index}>
                           <AccordionTrigger>
                             <div className="flex items-center gap-4">

@@ -1,7 +1,6 @@
 import { IndexedEntity, Env } from "./core-utils";
 import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
-import { v4 as uuidv4 } from 'uuid';
 export class RateLimitEntity extends IndexedEntity<RateLimitState> {
   static readonly entityName = "ratelimit";
   static readonly indexName = "ratelimits";
@@ -45,22 +44,27 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
       }
     }
   }
+  static async listWALKeys(env: Env, after?: string): Promise<{ keys: string[]; next: string | null }> {
+    const di = new this(env, this.singletonId);
+    return di.stub.listPrefix('wal/', after);
+  }
   async appendWAL(key: string, event: WALEvent): Promise<void> {
-    // In a real implementation, this would write to R2. Here we use the DO's storage.
-    await this.stub.ctx.storage.put(key, JSON.stringify(event));
+    // Use casPut with version 0 to ensure this is a new, unversioned entry.
+    await this.stub.casPut(key, 0, event);
   }
   async listWALKeys(afterKey?: string): Promise<string[]> {
-    const { keys } = await this.stub.listPrefix('wal/', afterKey);
-    return keys;
+    const res = await this.stub.listPrefix('wal/', afterKey);
+    return res.keys;
   }
   async getWALEvent(key: string): Promise<WALEvent | null> {
-    const json = await this.stub.ctx.storage.get<string>(key);
-    return json ? JSON.parse(json) as WALEvent : null;
+    const doc = await this.stub.getDoc<WALEvent>(key);
+    return doc?.data ?? null;
   }
   async processEvent(key: string): Promise<boolean> {
-    const s = await this.getState();
     const event = await this.getWALEvent(key);
-    if (!event || s.seenEvents.includes(event._id)) return false;
+    if (!event) return false;
+    const s = await this.getState();
+    if (s.seenEvents.includes(event._id)) return false;
     await FeedEntity.ingest(this.env, event.feedId, event.payload);
     await this.mutate(cur => ({
       ...cur,
@@ -70,7 +74,7 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
   }
   async replay(): Promise<number> {
     const s = await this.getState();
-    const keys = await this.listWALKeys(s.lastProcessed);
+    const keys = await this.listWALKeys(s.lastProcessed ?? undefined);
     let processed = 0;
     for (const key of keys) {
       if (await this.processEvent(key)) processed++;
@@ -154,8 +158,6 @@ export class FeedEntity extends IndexedEntity<FeedState> {
   }));
   static async ensureSeed(env: Env): Promise<void> {
     await super.ensureSeed(env);
-    await CoordinatorEntity.ensureSeed(env);
-    await DurabilityIndexEntity.ensureSeed(env);
   }
   static async ingest(env: Env, id: string, payload: Record<string, any>): Promise<void> {
     const feed = new this(env, id);
