@@ -143,6 +143,7 @@ export interface Resource {
   lastUpdated: string; // ISO 8601 string
   phone?: string;
   website?: string;
+  available_spots?: number;
 }
 export interface ResourceFilters {
   lat?: number;
@@ -155,8 +156,13 @@ export interface ResourceFilters {
   min_rating?: number;
   type?: ResourceType;
   query?: string;
+  radius_km?: number;
 }
 export interface ResourceListResponse {
-  items: Resource[];
+  items: (Resource & { dist_km?: number })[];
+  next?: string;
+}
+export interface ShelterListResponse {
+  items: (Resource & { dist_km?: number })[];
   next?: string;
 }

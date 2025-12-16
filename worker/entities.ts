@@ -1,5 +1,5 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result, PulseMetrics, Resource, ResourceFilters, ResourceType } from "@shared/types";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result, PulseMetrics, Resource, ResourceFilters, ResourceType, ResourceListResponse, ShelterListResponse } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS, MOCK_H3_PULSE, MOCK_RESOURCES } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
 // Define Doc type locally to assist TypeScript inference where needed.
@@ -419,19 +419,6 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
-function matchFilters(resource: Resource, filters: ResourceFilters): boolean {
-  if (filters.query && !resource.name.toLowerCase().includes(filters.query.toLowerCase())) return false;
-  if (filters.type && resource.type !== filters.type) return false;
-  if (filters.lang && !resource.langs.includes(filters.lang)) return false;
-  if (filters.eligibility && !resource.eligibility.includes(filters.eligibility)) return false;
-  if (filters.min_rating && resource.access_rating < filters.min_rating) return false;
-  if (filters.lat && filters.lon && filters.radius) {
-    const distance = haversineDistance(filters.lat, filters.lon, resource.lat, resource.lon);
-    if (distance > filters.radius) return false;
-  }
-  // Note: open_now filter is complex and would require parsing `hours` string, omitted in this stub.
-  return true;
-}
 export class ResourceEntity extends IndexedEntity<ResourceState> {
   static readonly entityName = 'resource';
   static readonly indexName = 'resources';
@@ -440,9 +427,34 @@ export class ResourceEntity extends IndexedEntity<ResourceState> {
     access_rating: 0, langs: [], verified: false, lastUpdated: '',
   };
   static seedData = MOCK_RESOURCES.map(r => ({ ...r, geoIndex: [`geo:${r.lat.toFixed(4)}:${r.lon.toFixed(4)}:5`] }));
-  static async listFiltered(env: Env, filters: ResourceFilters): Promise<Resource[]> {
+  static async listFiltered(env: Env, filters: ResourceFilters): Promise<ResourceListResponse> {
     const { items } = await this.list(env, null, 1000); // Fetch all for in-memory filter
-    return items.filter(item => matchFilters(item, filters));
+    const filteredItems = items.map(item => {
+      let dist_km: number | undefined = undefined;
+      if (filters.lat && filters.lon) {
+        dist_km = haversineDistance(filters.lat, filters.lon, item.lat, item.lon);
+      }
+      return { ...item, dist_km };
+    }).filter(item => {
+      if (filters.query && !item.name.toLowerCase().includes(filters.query.toLowerCase())) return false;
+      if (filters.type && item.type !== filters.type) return false;
+      if (filters.lang && !item.langs.includes(filters.lang)) return false;
+      if (filters.eligibility && !item.eligibility.includes(filters.eligibility)) return false;
+      if (filters.min_rating && item.access_rating < filters.min_rating) return false;
+      if (filters.radius && item.dist_km !== undefined && item.dist_km > filters.radius) return false;
+      // Note: open_now filter is complex and would require parsing `hours` string, omitted in this stub.
+      return true;
+    });
+    return { items: filteredItems, next: null };
+  }
+  static async shelters(env: Env, filters: ResourceFilters): Promise<ShelterListResponse> {
+    const effectiveFilters: ResourceFilters = {
+      ...filters,
+      radius: filters.radius_km || filters.radius || 5, // Use radius_km if provided, fallback to radius, then 5km
+    };
+    const { items, next } = await this.listFiltered(env, effectiveFilters);
+    const filteredByType = items.filter(i => ['shelter', 'food', 'clinic'].includes(i.type));
+    return { items: filteredByType, next };
   }
   static async ingest(env: Env, payload: Resource): Promise<void> {
     const resource = new this(env, payload.id);
