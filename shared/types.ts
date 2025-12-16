@@ -31,7 +31,18 @@ export interface FeedStats {
   alerts: number;
   alertsTrend?: number;
 }
+
 export interface VelocityDataPoint {
   time: string;
   events: number;
+}
+
+export interface CoordinatorState {
+  totalEvents: number;
+  buckets: Record<string, number>; // hourKey -> count
+  lastUpdate: string;
+}
+export interface RateLimitState {
+  count: number;
+  resetTime: number; // ms
 }

@@ -1,6 +1,76 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem } from "@shared/types";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
+export class RateLimitEntity extends IndexedEntity<RateLimitState> {
+  static readonly entityName = "ratelimit";
+  static readonly indexName = "ratelimits";
+  static readonly initialState: RateLimitState = { count: 0, resetTime: 0 };
+  async hit(): Promise<void> {
+    await this.mutate(s => {
+      const now = Date.now();
+      if (now > s.resetTime) {
+        return { count: 1, resetTime: now + 60000 }; // 60s window
+      }
+      return { ...s, count: s.count + 1 };
+    });
+  }
+  async isLimited(durationMs: number, limit: number): Promise<boolean> {
+    const s = await this.getState();
+    if (Date.now() > s.resetTime) {
+      return false;
+    }
+    return s.count >= limit;
+  }
+}
+export class CoordinatorEntity extends IndexedEntity<CoordinatorState> {
+  static readonly entityName = "coordinator";
+  static readonly indexName = "coordinators"; // This is a singleton
+  static readonly initialState: CoordinatorState = { totalEvents: 0, buckets: {}, lastUpdate: '' };
+  static readonly singletonId = "global";
+  static async ensureSeed(env: Env): Promise<void> {
+    const coord = new this(env, this.singletonId);
+    if (!(await coord.exists())) {
+      await coord.save(this.initialState);
+    }
+  }
+  async incrEvent(hourKey: string): Promise<void> {
+    await this.mutate(s => ({
+      ...s,
+      totalEvents: s.totalEvents + 1,
+      buckets: { ...s.buckets, [hourKey]: (s.buckets[hourKey] || 0) + 1 },
+      lastUpdate: new Date().toISOString(),
+    }));
+  }
+  async getFeed(feedId: string): Promise<FeedState | null> {
+    const feed = new FeedEntity(this.env, feedId);
+    return (await feed.exists()) ? await feed.getState() : null;
+  }
+  async computeStats(): Promise<FeedStats & { velocity: VelocityDataPoint[] }> {
+    const { items: feeds } = await FeedEntity.list(this.env, null, 500);
+    const s = await this.getState();
+    const totalFeeds = feeds.length;
+    const activeFeeds = feeds.filter(f => f.status === 'Online').length;
+    const alerts = feeds.length - activeFeeds;
+    const now = new Date();
+    const currentHour = Math.floor(now.getTime() / 3600000);
+    const velocity: VelocityDataPoint[] = [];
+    for (let i = 9; i >= 0; i--) {
+      const hr = currentHour - i;
+      const d = new Date(hr * 3600000);
+      const time = d.toLocaleTimeString('en-US', { hour: '2-digit', hour12: false }).replace('24', '00') + ":00";
+      const events = s.buckets[`${hr}`] || 0;
+      velocity.push({ time, events });
+    }
+    return {
+      totalFeeds,
+      activeFeeds,
+      alerts,
+      activeFeedsTrend: Math.random() * 5 - 2.5, // Mock trend
+      alertsTrend: Math.random() * 20 - 10, // Mock trend
+      velocity,
+    };
+  }
+}
 export class FeedEntity extends IndexedEntity<FeedState> {
   static readonly entityName = "feed";
   static readonly indexName = "feeds";
@@ -19,8 +89,12 @@ export class FeedEntity extends IndexedEntity<FeedState> {
     ...f,
     history: MOCK_FEED_HISTORY[f.id] ?? [],
     ingestionRate: Math.round(Math.random() * 10 + 5),
-    totalEvents: Math.round(100 + Math.random() * 200),
+    totalEvents: MOCK_FEED_HISTORY[f.id]?.length || Math.round(100 + Math.random() * 200),
   }));
+  static async ensureSeed(env: Env): Promise<void> {
+    await super.ensureSeed(env);
+    await CoordinatorEntity.ensureSeed(env);
+  }
   static async ingest(env: Env, id: string, payload: Record<string, any>): Promise<void> {
     const feed = new this(env, id);
     await feed.mutate(s => {
@@ -45,5 +119,10 @@ export class FeedEntity extends IndexedEntity<FeedState> {
         status: 'Online' // Assume ingest means it's online
       };
     });
+    // Notify coordinator
+    const coord = new CoordinatorEntity(env, CoordinatorEntity.singletonId);
+    const now = Date.now();
+    const hourKey = `${Math.floor(now / 3600000)}`;
+    await coord.incrEvent(hourKey);
   }
 }
