@@ -18,11 +18,17 @@ import { RootLayout } from '@/components/layout/RootLayout';
 import { WALPage } from '@/pages/WALPage';
 import { SearchPage } from '@/pages/SearchPage';
 import { LandingPage } from '@/pages/LandingPage';
+import { PublicInfographicsPage } from '@/pages/PublicInfographicsPage';
 const queryClient = new QueryClient();
 const router = createBrowserRouter([
   {
     path: "/",
     element: <LandingPage />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: "/public/infographics",
+    element: <PublicInfographicsPage />,
     errorElement: <RouteErrorBoundary />,
   },
   {

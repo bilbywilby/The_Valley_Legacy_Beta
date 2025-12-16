@@ -15,6 +15,88 @@ async function generateEmbeddingRoute(input: string): Promise<number[]> {
   }
   return vector;
 }
+// --- Infographic Generation Logic ---
+const RSS_SOURCES: Record<string, string[]> = {
+  news: [
+    'https://www.mcall.com/arcio/arc/outboundfeeds/rss/?topic=news&outputType=xml',
+    'https://patch.com/pennsylvania/lehighvalley/rss'
+  ],
+  traffic: [
+    'https://www.mcall.com/arcio/arc/outboundfeeds/rss/?topic=traffic&outputType=xml'
+  ],
+  weather: [], // Add sources if available
+  all: [
+    'https://www.mcall.com/arcio/arc/outboundfeeds/rss/?topic=news&outputType=xml',
+    'https://patch.com/pennsylvania/lehighvalley/rss',
+    'https://www.mcall.com/arcio/arc/outboundfeeds/rss/?topic=traffic&outputType=xml'
+  ]
+};
+const STOPWORDS = new Set(['a', 'an', 'the', 'and', 'or', 'in', 'on', 'at', 'for', 'to', 'of', 'is', 'was', 'it', 'with', 'as', 'by', 'from']);
+const TOPIC_KEYWORDS: Record<string, string[]> = {
+  'Traffic': ['traffic', 'accident', 'crash', 'road', 'route', 'highway', 'i-78', 'rt-22', 'closure', 'congestion'],
+  'Weather': ['weather', 'storm', 'rain', 'snow', 'wind', 'temperature', 'forecast', 'warning', 'advisory'],
+  'Public Safety': ['police', 'fire', 'arrest', 'crime', 'shooting', 'investigation', 'emergency', 'ems'],
+  'Infrastructure': ['power', 'outage', 'water', 'construction', 'development', 'zoning', 'bridge'],
+  'Community': ['school', 'event', 'festival', 'community', 'local', 'park', 'meeting', 'lehigh', 'valley']
+};
+const SENTIMENT_WORDS = {
+  positive: new Set(['good', 'great', 'safe', 'clear', 'stable', 'improvement', 'success', 'celebrates']),
+  negative: new Set(['bad', 'crash', 'crime', 'warning', 'outage', 'fatal', 'delay', 'problem', 'concern'])
+};
+const escapeXML = (str: string) => str.replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c] || c));
+function generateErrorSVG(message: string): string {
+  return `<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+    <style>.title { font-size: 24px; font-weight: bold; fill: #ff6b6b; } .msg { font-size: 18px; fill: #f1f5f9; }</style>
+    <rect width="100%" height="100%" fill="#1e293b" />
+    <text x="50%" y="45%" dominant-baseline="middle" text-anchor="middle" class="title">Infographic Error</text>
+    <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" class="msg">${escapeXML(message)}</text>
+  </svg>`;
+}
+function generateInfographicSVG(stats: { topicCounts: Record<string, number>, sentiment: { positive: number, negative: number }, topHeadlines: string[], period: string, source: string }): string {
+  const { topicCounts, sentiment, topHeadlines, period, source } = stats;
+  const totalTopics = Object.values(topicCounts).reduce((a, b) => a + b, 0);
+  const totalSentiment = sentiment.positive + sentiment.negative;
+  const barData = Object.entries(topicCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const barWidth = 100;
+  const barSpacing = 40;
+  const chartHeight = 250;
+  const maxCount = Math.max(1, ...barData.map(d => d[1]));
+  const bars = barData.map(([topic, count], i) => {
+    const height = (count / maxCount) * chartHeight;
+    const x = 60 + i * (barWidth + barSpacing);
+    const y = 320 - height;
+    return `<g>
+      <rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="url(#grad)" rx="4" />
+      <text x="${x + barWidth / 2}" y="${y - 10}" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="bold">${count}</text>
+      <text x="${x + barWidth / 2}" y="340" text-anchor="middle" fill="#94a3b8" font-size="14">${escapeXML(topic)}</text>
+    </g>`;
+  }).join('');
+  const headlines = topHeadlines.map((h, i) => `<tspan x="50" dy="24">${i + 1}. ${escapeXML(h.length > 80 ? h.substring(0, 77) + '...' : h)}</tspan>`).join('');
+  return `<svg width="800" height="600" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" font-family="Inter, sans-serif">
+    <defs>
+      <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#10b981;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <style>
+      .title { font-size: 28px; font-weight: bold; fill: #f1f5f9; }
+      .subtitle { font-size: 16px; fill: #94a3b8; }
+      .header { font-size: 20px; font-weight: 600; fill: #cbd5e1; }
+      .headline-text { font-size: 15px; fill: #e2e8f0; }
+    </style>
+    <rect width="100%" height="100%" fill="#0f172a" />
+    <rect width="798" height="598" x="1" y="1" fill="none" stroke="#334155" rx="8" />
+    <text x="400" y="50" text-anchor="middle" class="title">Lehigh Valley Intelligence Summary</text>
+    <text x="400" y="80" text-anchor="middle" class="subtitle">Source: ${escapeXML(source)} | Period: Last ${escapeXML(period)}</text>
+    <line x1="40" y1="110" x2="760" y2="110" stroke="#334155" />
+    <text x="50" y="150" class="header">Top Topics</text>
+    <g>${bars}</g>
+    <line x1="40" y1="370" x2="760" y2="370" stroke="#334155" />
+    <text x="50" y="410" class="header">Recent Headlines</text>
+    <text x="50" y="440" class="headline-text">${headlines}</text>
+  </svg>`;
+}
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
@@ -52,6 +134,17 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
   app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search']));
+  app.use('/infographic.svg', async (c, next) => {
+    const cache = (caches as any).default;
+    const response = await cache.match(c.req.raw);
+    if (response) return response;
+    await next();
+    if (c.res.ok) {
+      const resClone = c.res.clone();
+      resClone.headers.set('Cache-Control', 's-maxage=3600'); // 1 hour cache
+      c.executionCtx.waitUntil(cache.put(c.req.raw, resClone));
+    }
+  });
   // Ensure seed data is present on first load
   app.use('/api/*', async (c, next) => {
     await FeedEntity.ensureSeed(c.env);
@@ -60,6 +153,67 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     await VectorIndexCoordinatorEntity.ensureSeed(c.env);
     await BM25IndexEntity.ensureSeed(c.env);
     await next();
+  });
+  // --- Infographic Route ---
+  app.get('/infographic.svg', async (c) => {
+    console.time('gen_infographic');
+    try {
+      const period = c.req.query('period') || '7d';
+      const source = c.req.query('source') || 'news';
+      const days = parseInt(period.replace('d', '')) || 7;
+      const since = Date.now() - days * 24 * 60 * 60 * 1000;
+      const urls = RSS_SOURCES[source] || RSS_SOURCES['news'];
+      const responses = await Promise.all(urls.map(url => fetch(url, { headers: { 'User-Agent': 'ValleyScope-Infographic-Bot/1.0' } })));
+      const seenHashes = new Set<string>();
+      const allItems: { title: string; pubDate: number }[] = [];
+      for (const response of responses) {
+        if (!response.ok) continue;
+        const xml = await response.text();
+        const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
+        for (const item of items) {
+          const titleMatch = item[1].match(/<title><!\[CDATA\[(.*?)\]\]>|<\/title>/) || item[1].match(/<title>(.*?)<\/title>/);
+          const dateMatch = item[1].match(/<pubDate>(.*?)<\/pubDate>/);
+          if (titleMatch?.[1] && dateMatch?.[1]) {
+            const pubDate = new Date(dateMatch[1]).getTime();
+            if (pubDate > since) {
+              const title = titleMatch[1].trim();
+              const encoder = new TextEncoder();
+              const data = encoder.encode(title);
+              const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+              const hash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+              if (!seenHashes.has(hash)) {
+                seenHashes.add(hash);
+                allItems.push({ title, pubDate });
+              }
+            }
+          }
+        }
+      }
+      const sortedItems = allItems.sort((a, b) => b.pubDate - a.pubDate);
+      const topicCounts: Record<string, number> = {};
+      const sentiment = { positive: 0, negative: 0 };
+      for (const { title } of sortedItems) {
+        const tokens = title.toLowerCase().split(/\W+/).filter(t => t.length > 2 && !STOPWORDS.has(t));
+        for (const token of tokens) {
+          for (const [topic, keywords] of Object.entries(TOPIC_KEYWORDS)) {
+            if (keywords.includes(token)) {
+              topicCounts[topic] = (topicCounts[topic] || 0) + 1;
+            }
+          }
+          if (SENTIMENT_WORDS.positive.has(token)) sentiment.positive++;
+          if (SENTIMENT_WORDS.negative.has(token)) sentiment.negative++;
+        }
+      }
+      const topHeadlines = sortedItems.slice(0, 3).map(item => item.title);
+      const svg = generateInfographicSVG({ topicCounts, sentiment, topHeadlines, period, source });
+      console.timeEnd('gen_infographic');
+      console.log(`Generated infographic: ${allItems.length} items processed.`);
+      return c.body(svg, 200, { 'Content-Type': 'image/svg+xml' });
+    } catch (e: any) {
+      console.error('Infographic generation failed:', e.message);
+      console.timeEnd('gen_infographic');
+      return c.body(generateErrorSVG(e.message), 500, { 'Content-Type': 'image/svg+xml' });
+    }
   });
   // --- DEPRECATED ROUTES (kept for compatibility, now point to coordinator) ---
   app.get('/api/dashboard/stats', async (c) => {
