@@ -130,6 +130,7 @@ function parseResourceFilters(query: Record<string, string>): ResourceFilters {
     if (query.lat) filters.lat = parseFloat(query.lat);
     if (query.lon) filters.lon = parseFloat(query.lon);
     if (query.radius) filters.radius = parseFloat(query.radius);
+    if (query.radius_km) filters.radius_km = parseFloat(query.radius_km);
     if (query.open_now) filters.open_now = query.open_now === 'true';
     if (query.lang) filters.lang = query.lang;
     if (query.eligibility) filters.eligibility = query.eligibility;
@@ -176,7 +177,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/coordinator/ingest*', authStub);
   app.use('/api/resources', authStub);
   app.use('/api/resources/:id/verify', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search', '/api/pulse', '/api/cred', '/api/resources', '/api/resources/suggest']));
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search', '/api/pulse', '/api/cred', '/api/resources', '/api/resources/suggest', '/api/shelters']));
   app.use('/infographic.svg', async (c, next) => {
     const cache = (caches as any).default;
     const response = await cache.match(c.req.raw);
@@ -350,7 +351,13 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.get('/api/resources', async (c) => {
     const filters = parseResourceFilters(c.req.query());
     const resources = await ResourceEntity.listFiltered(c.env, filters);
-    return ok(c, { items: resources });
+    return ok(c, resources);
+  });
+  app.get('/api/shelters', async (c) => {
+    const filters = parseResourceFilters(c.req.query());
+    if (!filters.lat || !filters.lon) return bad(c, 'lat and lon are required for this endpoint');
+    const res = await ResourceEntity.shelters(c.env, filters);
+    return ok(c, res);
   });
   app.post('/api/resources', async (c) => {
     const payload = await c.req.json<Resource>();
