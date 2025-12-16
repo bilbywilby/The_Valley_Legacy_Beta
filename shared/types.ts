@@ -58,3 +58,12 @@ export interface WALEvent {
   payload: Record<string, any>;
   timestamp: string;
 }
+export interface WALListResponse {
+  keys: string[];
+  next?: string | null;
+}
+export interface WALStats {
+  processed: number;
+  lastProcessed: string;
+  totalSeen: number;
+}

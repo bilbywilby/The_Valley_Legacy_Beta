@@ -5,7 +5,7 @@ import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
 import { v4 as uuidv4 } from 'uuid';
-import { WALEvent } from "@shared/types";
+import { WALEvent, WALStats } from "@shared/types";
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
@@ -42,10 +42,12 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/*', rateLimit);
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats']));
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/wal']));
   // Ensure seed data is present on first load
   app.use('/api/*', async (c, next) => {
     await FeedEntity.ensureSeed(c.env);
+    await CoordinatorEntity.ensureSeed(c.env);
+    await DurabilityIndexEntity.ensureSeed(c.env);
     await next();
   });
   // --- DEPRECATED ROUTES (kept for compatibility, now point to coordinator) ---
@@ -147,5 +149,17 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     const id = c.req.param('id');
     const { payload } = await c.req.json();
     return handleIngest(c, id, payload);
+  });
+  // WAL Routes
+  app.get('/api/wal', async (c) => {
+    const after = c.req.query('after');
+    const res = await DurabilityIndexEntity.listWALKeys(c.env, after ?? undefined);
+    return ok(c, res);
+  });
+  app.post('/api/wal/replay', async (c) => {
+    const di = new DurabilityIndexEntity(c.env, DurabilityIndexEntity.singletonId);
+    const processed = await di.replay();
+    const s = await di.getState();
+    return ok(c, { processed, lastProcessed: s.lastProcessed, totalSeen: s.seenEvents.length } as WALStats);
   });
 }
