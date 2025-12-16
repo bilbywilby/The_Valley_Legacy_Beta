@@ -14,6 +14,7 @@ import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 import '@/index.css'
 import { HomePage } from '@/pages/HomePage'
 import { FeedsPage } from '@/pages/FeedsPage';
+import { FeedDetailPage } from '@/pages/FeedDetailPage';
 import { AppLayout } from '@/components/layout/AppLayout';
 const queryClient = new QueryClient();
 const RootLayout = () => (
@@ -21,7 +22,7 @@ const RootLayout = () => (
     <Outlet />
   </AppLayout>
 );
-const router = createBrowserRouter([
+export const router = createBrowserRouter([
   {
     element: <RootLayout />,
     errorElement: <RouteErrorBoundary />,
@@ -33,6 +34,10 @@ const router = createBrowserRouter([
       {
         path: "/feeds",
         element: <FeedsPage />,
+      },
+      {
+        path: "/feeds/:id",
+        element: <FeedDetailPage />,
       },
     ]
   }
