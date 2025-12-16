@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import {
   createBrowserRouter,
   RouterProvider,
+  Navigate,
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -16,33 +17,44 @@ import { FeedDetailPage } from '@/pages/FeedDetailPage';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { WALPage } from '@/pages/WALPage';
 import { SearchPage } from '@/pages/SearchPage';
+import { LandingPage } from '@/pages/LandingPage';
 const queryClient = new QueryClient();
 const router = createBrowserRouter([
   {
+    path: "/",
+    element: <LandingPage />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: "/app",
     element: <RootLayout />,
     errorElement: <RouteErrorBoundary />,
     children: [
       {
-        path: "/",
+        index: true, // This makes it the default child route for /app
         element: <HomePage />,
       },
       {
-        path: "/feeds",
+        path: "feeds",
         element: <FeedsPage />,
       },
       {
-        path: "/feeds/:id",
+        path: "feeds/:id",
         element: <FeedDetailPage />,
       },
       {
-        path: "/wal",
+        path: "wal",
         element: <WALPage />,
       },
       {
-        path: "/search",
+        path: "search",
         element: <SearchPage />,
       },
     ]
+  },
+  {
+    path: "*",
+    element: <Navigate to="/" replace />,
   }
 ]);
 createRoot(document.getElementById('root')!).render(

@@ -4,9 +4,8 @@ import { motion } from 'framer-motion';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowRight, CheckCircle, Cpu, Database, Globe, Zap, ChartBar, ImageOff } from 'lucide-react';
+import { ArrowRight, CheckCircle, Cpu, Database, Globe, Zap } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
-import { Skeleton } from '@/components/ui/skeleton';
 // --- A/B Test Configuration ---
 const variants = {
   a: {
@@ -114,42 +113,6 @@ const FaqSchema = () => {
     />
   );
 };
-const LiveInsightImage = () => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
-  const src = `/infographic.svg?period=7d&source=news&t=${new Date().getHours()}`; // Add hourly cache buster
-  useEffect(() => {
-    const img = new Image();
-    img.src = src;
-    img.onload = () => setIsLoading(false);
-    img.onerror = () => {
-      setIsLoading(false);
-      setHasError(true);
-    };
-  }, [src]);
-  if (isLoading) {
-    return <Skeleton className="w-full h-96 rounded-xl shimmer" />;
-  }
-  if (hasError) {
-    return (
-      <div className="w-full h-96 rounded-xl bg-slate-900/50 flex flex-col items-center justify-center text-muted-foreground">
-        <ImageOff className="h-16 w-16 mb-4" />
-        <p>Live insight graphic is currently unavailable.</p>
-      </div>
-    );
-  }
-  return (
-    <motion.img
-      src={src}
-      alt="Lehigh Valley 7-Day Intelligence Summary"
-      className="w-full rounded-xl shadow-2xl mx-auto max-h-[500px] object-contain"
-      initial={{ opacity: 0, scale: 1.05 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 1 }}
-      whileHover={{ scale: 1.02 }}
-    />
-  );
-};
 export function LandingPage() {
   const [variant, setVariant] = useState(variants.a);
   useEffect(() => {
@@ -212,29 +175,8 @@ export function LandingPage() {
           </div>
         </header>
         <main>
-          {/* --- Live Insights Section --- */}
-          <section className="py-16 md:py-24">
-            <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="text-center mb-12">
-                <h2 className="text-3xl font-bold tracking-tight">Live Insights from the Valley</h2>
-                <p className="mt-4 text-muted-foreground max-w-2xl mx-auto">
-                  This auto-generated infographic summarizes topics and sentiment from local news feeds over the last 7 days.
-                </p>
-              </div>
-              <div className="glass p-4 md:p-6 rounded-xl">
-                <LiveInsightImage />
-              </div>
-              <div className="text-center mt-8">
-                <Button asChild variant="ghost">
-                  <Link to="/public/infographics">
-                    View Infographic Gallery <ChartBar className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          </section>
           {/* --- Features Section --- */}
-          <section className="py-16 md:py-24 bg-slate-950/50">
+          <section className="py-16 md:py-24">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="text-center mb-12">
                 <h2 className="text-3xl font-bold tracking-tight">A Unified Platform for Regional Intelligence</h2>
@@ -265,7 +207,7 @@ export function LandingPage() {
             </div>
           </section>
           {/* --- Pricing Section --- */}
-          <section className="py-16 md:py-24">
+          <section className="py-16 md:py-24 bg-slate-950/50">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="text-center mb-12">
                 <h2 className="text-3xl font-bold tracking-tight">Simple, Transparent Pricing</h2>
@@ -279,7 +221,7 @@ export function LandingPage() {
             </div>
           </section>
           {/* --- FAQ Section --- */}
-          <section className="py-16 md:py-24 bg-slate-950/50">
+          <section className="py-16 md:py-24">
             <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="text-center mb-12">
                 <h2 className="text-3xl font-bold tracking-tight">Frequently Asked Questions</h2>
