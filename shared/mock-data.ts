@@ -53,3 +53,39 @@ export const MOCK_VELOCITY_DATA: VelocityDataPoint[] = [
   { time: '19:00', events: 200 },
   { time: '20:00', events: 180 },
 ];
+const generateMockEmbedding = (): number[] => Array.from({ length: 128 }, () => Math.random() * 2 - 1);
+export const MOCK_VECTOR_SHARDS: { id: string; events: VectorizedEvent[] }[] = [
+  {
+    id: `Lehigh County-traffic-${new Date().toISOString().slice(0, 10)}`,
+    events: Array.from({ length: 20 }, (_, i) => ({
+      _id: `mock-traffic-${i}`,
+      _seq: Date.now() - i * 10000,
+      feedId: 'f1',
+      payload: { event: 'Accident report', location: `Route 22, mile ${30 + i}` },
+      timestamp: new Date(Date.now() - i * 60000).toISOString(),
+      embedding: generateMockEmbedding(),
+    })),
+  },
+  {
+    id: `Northampton County-weather-${new Date().toISOString().slice(0, 10)}`,
+    events: Array.from({ length: 15 }, (_, i) => ({
+      _id: `mock-weather-${i}`,
+      _seq: Date.now() - i * 15000,
+      feedId: 'f7',
+      payload: { event: 'High wind advisory', speed: `${20 + i} mph` },
+      timestamp: new Date(Date.now() - i * 90000).toISOString(),
+      embedding: generateMockEmbedding(),
+    })),
+  },
+  {
+    id: `Lehigh Valley-infrastructure-${new Date().toISOString().slice(0, 10)}`,
+    events: Array.from({ length: 10 }, (_, i) => ({
+      _id: `mock-infra-${i}`,
+      _seq: Date.now() - i * 20000,
+      feedId: 'f4',
+      payload: { event: 'Power outage reported', affected: 50 + i * 10 },
+      timestamp: new Date(Date.now() - i * 120000).toISOString(),
+      embedding: generateMockEmbedding(),
+    })),
+  },
+];
