@@ -6,14 +6,12 @@ import { StatCard } from '@/components/dashboard/StatCard';
 import { VelocityChart } from '@/components/dashboard/VelocityChart';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+type CoordinatorStatsResponse = FeedStats & { velocity: VelocityDataPoint[] };
 export function HomePage() {
-  const { data: stats, isLoading: isLoadingStats } = useQuery<FeedStats>({
-    queryKey: ['dashboardStats'],
-    queryFn: () => api('/api/dashboard/stats'),
-  });
-  const { data: velocityData, isLoading: isLoadingVelocity } = useQuery<VelocityDataPoint[]>({
-    queryKey: ['velocityData'],
-    queryFn: () => api('/api/dashboard/velocity'),
+  const { data: stats, isLoading: isLoadingStats } = useQuery<CoordinatorStatsResponse>({
+    queryKey: ['coordinatorStats'],
+    queryFn: () => api('/api/coordinator/stats'),
+    refetchInterval: 15000, // Poll for fresh stats every 15 seconds
   });
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -53,7 +51,7 @@ export function HomePage() {
               isLoading={isLoadingStats}
             />
           </div>
-          <VelocityChart data={velocityData ?? []} isLoading={isLoadingVelocity} />
+          <VelocityChart data={stats?.velocity ?? []} isLoading={isLoadingStats} />
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="bg-slate-950/50 border-slate-800 lg:col-span-2">
               <CardHeader>
