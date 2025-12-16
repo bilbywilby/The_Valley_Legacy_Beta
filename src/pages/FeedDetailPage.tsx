@@ -54,7 +54,7 @@ export function FeedDetailPage() {
   const { data, isLoading, error } = useQuery<FeedDetailResponse>({
     queryKey: ['feed', id],
     queryFn: () => api(`/api/feeds/${id}`),
-    refetchInterval: 10000,
+    refetchInterval: 30000,
     enabled: !!id,
   });
   const ingestMutation = useMutation({

@@ -11,7 +11,7 @@ export function HomePage() {
   const { data: stats, isLoading: isLoadingStats } = useQuery<CoordinatorStatsResponse>({
     queryKey: ['coordinatorStats'],
     queryFn: () => api('/api/coordinator/stats'),
-    refetchInterval: 15000, // Poll for fresh stats every 15 seconds
+    refetchInterval: 30000, // Poll for fresh stats every 30 seconds
   });
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
