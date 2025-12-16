@@ -3,22 +3,22 @@ export interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
 }
-
-// Minimal real-world chat example types (shared by frontend and worker)
-export interface User {
+export interface FeedItem {
   id: string;
   name: string;
+  type: 'Traffic' | 'Weather' | 'Public Safety' | 'Infrastructure';
+  status: 'Online' | 'Degraded' | 'Offline';
+  region: string;
+  lastUpdate: string; // ISO 8601 string
 }
-
-export interface Chat {
-  id: string;
-  title: string;
+export interface FeedStats {
+  totalFeeds: number;
+  activeFeeds: number;
+  activeFeedsTrend?: number;
+  alerts: number;
+  alertsTrend?: number;
 }
-
-export interface ChatMessage {
-  id: string;
-  chatId: string;
-  userId: string;
-  text: string;
-  ts: number; // epoch millis
+export interface VelocityDataPoint {
+  time: string;
+  events: number;
 }
