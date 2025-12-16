@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import type { Env } from './core-utils';
-import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity, BM25IndexEntity, PulseEntity } from "./entities";
+import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity, BM25IndexEntity, PulseEntity, ResourceEntity } from "./entities";
 import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
 import { v4 as uuidv4 } from 'uuid';
-import { WALEvent, WALStats, IngestEvent, VectorizedEvent, SearchResponse, CredResponse } from "@shared/types";
+import { WALEvent, WALStats, IngestEvent, VectorizedEvent, SearchResponse, CredResponse, Resource, ResourceFilters, ResourceType } from "@shared/types";
 // This is a simplified version of the generateEmbedding function for use in routes.
 // The full version with crypto is in entities.ts.
 async function generateEmbeddingRoute(input: string): Promise<number[]> {
@@ -125,6 +125,19 @@ function generateTileSVG(stats: { topicCounts: Record<string, number>, window: s
     <g>${bars}</g>
   </svg>`;
 }
+function parseResourceFilters(query: Record<string, string>): ResourceFilters {
+    const filters: ResourceFilters = {};
+    if (query.lat) filters.lat = parseFloat(query.lat);
+    if (query.lon) filters.lon = parseFloat(query.lon);
+    if (query.radius) filters.radius = parseFloat(query.radius);
+    if (query.open_now) filters.open_now = query.open_now === 'true';
+    if (query.lang) filters.lang = query.lang;
+    if (query.eligibility) filters.eligibility = query.eligibility;
+    if (query.min_rating) filters.min_rating = parseFloat(query.min_rating);
+    if (query.type) filters.type = query.type as ResourceType;
+    if (query.query) filters.query = query.query;
+    return filters;
+}
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
@@ -161,7 +174,9 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/*', rateLimit);
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search', '/api/pulse', '/api/cred']));
+  app.use('/api/resources', authStub);
+  app.use('/api/resources/:id/verify', authStub);
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic', '/api/search', '/api/pulse', '/api/cred', '/api/resources', '/api/resources/suggest']));
   app.use('/infographic.svg', async (c, next) => {
     const cache = (caches as any).default;
     const response = await cache.match(c.req.raw);
@@ -192,6 +207,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     await VectorIndexCoordinatorEntity.ensureSeed(c.env);
     await BM25IndexEntity.ensureSeed(c.env);
     await PulseEntity.ensureSeed(c.env);
+    await ResourceEntity.ensureSeed(c.env);
     await next();
   });
   // --- Infographic Route ---
@@ -329,6 +345,46 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
       },
     };
     return ok(c, response);
+  });
+  // --- NEW Resource Routes ---
+  app.get('/api/resources', async (c) => {
+    const filters = parseResourceFilters(c.req.query());
+    const resources = await ResourceEntity.listFiltered(c.env, filters);
+    return ok(c, { items: resources });
+  });
+  app.post('/api/resources', async (c) => {
+    const payload = await c.req.json<Resource>();
+    if (!payload.id) payload.id = `res-${payload.type}-${uuidv4().slice(0, 8)}`;
+    await ResourceEntity.ingest(c.env, payload);
+    return ok(c, payload);
+  });
+  app.get('/api/resources/suggest', async (c) => {
+    const query = c.req.query('query');
+    if (!isStr(query)) return bad(c, 'query is required');
+    const suggestions = await ResourceEntity.suggest(c.env, query);
+    return ok(c, { items: suggestions });
+  });
+  app.get('/api/resources/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!isStr(id)) return bad(c, 'id is required');
+    const resource = new ResourceEntity(c.env, id);
+    if (!(await resource.exists())) return notFound(c);
+    const state = await resource.getState();
+    return ok(c, state);
+  });
+  app.post('/api/resources/:id/verify', async (c) => {
+    const id = c.req.param('id');
+    const { approved } = await c.req.json<{ approved: boolean }>();
+    if (!isStr(id) || typeof approved !== 'boolean') return bad(c, 'id and approved boolean are required');
+    await ResourceEntity.verify(c.env, id, approved);
+    return ok(c, { success: true });
+  });
+  app.post('/api/resources/:id/report', async (c) => {
+    const id = c.req.param('id');
+    const { reason } = await c.req.json<{ reason: string }>();
+    if (!isStr(id) || !isStr(reason)) return bad(c, 'id and reason are required');
+    await ResourceEntity.report(c.env, id, reason);
+    return ok(c, { success: true });
   });
   // --- DEPRECATED ROUTES (kept for compatibility, now point to coordinator) ---
   app.get('/api/dashboard/stats', async (c) => {

@@ -1,6 +1,6 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result, PulseMetrics } from "@shared/types";
-import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS, MOCK_H3_PULSE } from "@shared/mock-data";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result, PulseMetrics, Resource, ResourceFilters, ResourceType } from "@shared/types";
+import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS, MOCK_H3_PULSE, MOCK_RESOURCES } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
 // Define Doc type locally to assist TypeScript inference where needed.
 type Doc<T> = { v: number; data: T };
@@ -402,5 +402,74 @@ export class FeedEntity extends IndexedEntity<FeedState> {
     const coord = new CoordinatorEntity(env, CoordinatorEntity.singletonId);
     const hourKey = `${Math.floor(Date.now() / 3600000)}`;
     await coord.incrEvent(hourKey);
+  }
+}
+// --- NEW Community Resource Entity ---
+interface ResourceState extends Resource {
+  geoIndex?: string[];
+  reports?: { reason: string; timestamp: string }[];
+}
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Radius of the Earth in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+function matchFilters(resource: Resource, filters: ResourceFilters): boolean {
+  if (filters.query && !resource.name.toLowerCase().includes(filters.query.toLowerCase())) return false;
+  if (filters.type && resource.type !== filters.type) return false;
+  if (filters.lang && !resource.langs.includes(filters.lang)) return false;
+  if (filters.eligibility && !resource.eligibility.includes(filters.eligibility)) return false;
+  if (filters.min_rating && resource.access_rating < filters.min_rating) return false;
+  if (filters.lat && filters.lon && filters.radius) {
+    const distance = haversineDistance(filters.lat, filters.lon, resource.lat, resource.lon);
+    if (distance > filters.radius) return false;
+  }
+  // Note: open_now filter is complex and would require parsing `hours` string, omitted in this stub.
+  return true;
+}
+export class ResourceEntity extends IndexedEntity<ResourceState> {
+  static readonly entityName = 'resource';
+  static readonly indexName = 'resources';
+  static readonly initialState: ResourceState = {
+    id: '', name: '', type: 'other', lat: 0, lon: 0, address: '', hours: [], eligibility: [],
+    access_rating: 0, langs: [], verified: false, lastUpdated: '',
+  };
+  static seedData = MOCK_RESOURCES.map(r => ({ ...r, geoIndex: [`geo:${r.lat.toFixed(4)}:${r.lon.toFixed(4)}:5`] }));
+  static async listFiltered(env: Env, filters: ResourceFilters): Promise<Resource[]> {
+    const { items } = await this.list(env, null, 1000); // Fetch all for in-memory filter
+    return items.filter(item => matchFilters(item, filters));
+  }
+  static async ingest(env: Env, payload: Resource): Promise<void> {
+    const resource = new this(env, payload.id);
+    await resource.save({
+      ...payload,
+      lastUpdated: new Date().toISOString(),
+    });
+  }
+  static async suggest(env: Env, query: string): Promise<Resource[]> {
+    if (!query) return [];
+    const { items } = await this.list(env, null, 500);
+    const lowerQuery = query.toLowerCase();
+    return items.filter(r => r.name.toLowerCase().includes(lowerQuery) || r.type.includes(lowerQuery)).slice(0, 10);
+  }
+  static async verify(env: Env, id: string, approved: boolean): Promise<void> {
+    const resource = new this(env, id);
+    if (await resource.exists()) {
+      await resource.patch({ verified: approved, lastUpdated: new Date().toISOString() });
+    }
+  }
+  static async report(env: Env, id: string, reason: string): Promise<void> {
+    const resource = new this(env, id);
+    if (await resource.exists()) {
+      await resource.mutate(s => ({
+        ...s,
+        reports: [...(s.reports ?? []), { reason, timestamp: new Date().toISOString() }],
+      }));
+    }
   }
 }

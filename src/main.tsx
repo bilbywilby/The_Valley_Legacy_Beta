@@ -20,6 +20,8 @@ import { SearchPage } from '@/pages/SearchPage';
 import { LandingPage } from '@/pages/LandingPage';
 import { PublicInfographicsPage } from '@/pages/PublicInfographicsPage';
 import { PublicPulsePage } from '@/pages/PublicPulsePage';
+import { ResourcesPage } from '@/pages/ResourcesPage';
+import { ResourceDetailPage } from '@/pages/ResourceDetailPage';
 const queryClient = new QueryClient();
 const router = createBrowserRouter([
   {
@@ -61,6 +63,14 @@ const router = createBrowserRouter([
       {
         path: "search",
         element: <SearchPage />,
+      },
+      {
+        path: "resources",
+        element: <ResourcesPage />,
+      },
+      {
+        path: "resources/:id",
+        element: <ResourceDetailPage />,
       },
     ]
   },
