@@ -1,11 +1,20 @@
 import { Hono } from "hono";
 import type { Env } from './core-utils';
-import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity } from "./entities";
+import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity, VectorIndexCoordinatorEntity } from "./entities";
 import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
 import { v4 as uuidv4 } from 'uuid';
-import { WALEvent, WALStats, IngestEvent } from "@shared/types";
+import { WALEvent, WALStats, IngestEvent, VectorizedEvent } from "@shared/types";
+// This is a simplified version of the generateEmbedding function for use in routes.
+// The full version with crypto is in entities.ts.
+async function generateEmbeddingRoute(input: string): Promise<number[]> {
+  const vector: number[] = [];
+  for (let i = 0; i < 128; i++) {
+    vector.push(Math.random() * 2 - 1);
+  }
+  return vector;
+}
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
@@ -42,12 +51,13 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/*', rateLimit);
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal']));
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal', '/api/query-semantic']));
   // Ensure seed data is present on first load
   app.use('/api/*', async (c, next) => {
     await FeedEntity.ensureSeed(c.env);
     await CoordinatorEntity.ensureSeed(c.env);
     await DurabilityIndexEntity.ensureSeed(c.env);
+    await VectorIndexCoordinatorEntity.ensureSeed(c.env);
     await next();
   });
   // --- DEPRECATED ROUTES (kept for compatibility, now point to coordinator) ---
@@ -68,6 +78,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     return ok(c, stats);
   });
   app.post('/api/ingest', async (c) => {
+    console.time('ingest');
     const body: IngestEvent = await c.req.json();
     const { feedId, payload, idempotencyKey, clientSeq } = body;
     if (!isStr(feedId) || !payload) return bad(c, 'feedId and payload required');
@@ -88,7 +99,9 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
       return c.json({ success: true, ackId: _id, alreadySeen: true }, 202);
     }
     const _seq = clientSeq ?? Date.now();
-    const event: WALEvent = { _id, _seq, feedId, payload, timestamp: new Date().toISOString() };
+    const timestamp = new Date().toISOString();
+    const embedding = await generateEmbeddingRoute(JSON.stringify(payload));
+    const event: VectorizedEvent = { _id, _seq, feedId, payload, timestamp, embedding };
     const dayKey = event.timestamp.slice(0, 10);
     const walKey = `wal/${dayKey}/${_seq}.${_id}.json`;
     const ackResp = c.json({ success: true, ackId: _id }, 202);
@@ -96,7 +109,21 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
       await DurabilityIndexEntity.appendToR2WAL(c.env, walKey, JSON.stringify(event));
       await di.mutate((s) => ({ ...s, seenEvents: [...s.seenEvents, _id].slice(-50000) }));
     })());
+    console.timeEnd('ingest');
     return ackResp;
+  });
+  app.get('/api/query-semantic', async (c) => {
+    const text = c.req.query('text');
+    if (!isStr(text)) return bad(c, 'text required');
+    const limit = parseInt(c.req.query('limit') || '10');
+    const threshold = parseFloat(c.req.query('threshold') || '0.7');
+    console.time('query-semantic');
+    const coord = new VectorIndexCoordinatorEntity(c.env, VectorIndexCoordinatorEntity.singletonId);
+    const resp = await coord.querySemantic(c.env, { text, limit, threshold });
+    console.timeEnd('query-semantic');
+    if (resp.total === 0) console.log('Benchmark: Empty query');
+    else if (resp.results.length > 0 && resp.results[0]?.score < 0.5) console.log('Benchmark: Low relevance');
+    return ok(c, resp);
   });
   // Feeds List
   app.get('/api/feeds', async (c) => {

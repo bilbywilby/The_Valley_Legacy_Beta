@@ -1,9 +1,31 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent } from "@shared/types";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
 // Define Doc type locally to assist TypeScript inference where needed.
 type Doc<T> = { v: number; data: T };
+async function generateEmbedding(input: string): Promise<number[]> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hash = Array.from(new Uint8Array(hashBuffer));
+  const vector: number[] = [];
+  for (let i = 0; i < 128; i++) {
+    // Use pairs of hash bytes to generate more varied floats
+    const byte1 = hash[i % hash.length];
+    const byte2 = hash[(i + 1) % hash.length];
+    vector.push(((byte1 * 256 + byte2) / 65535) * 2 - 1); // Range [-1, 1]
+  }
+  return vector;
+}
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (!a || !b || a.length !== b.length) return 0;
+  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  if (magnitudeA === 0 || magnitudeB === 0) return 0;
+  return dotProduct / (magnitudeA * magnitudeB);
+}
 export class RateLimitEntity extends IndexedEntity<RateLimitState> {
   static readonly entityName = "ratelimit";
   static readonly indexName = "ratelimits";
@@ -23,6 +45,60 @@ export class RateLimitEntity extends IndexedEntity<RateLimitState> {
       return false;
     }
     return s.count >= limit;
+  }
+}
+export class VectorShardEntity extends IndexedEntity<{shardId: string, events: VectorizedEvent[]}> {
+  static readonly entityName = 'vectorshard';
+  static readonly indexName = 'vectorshards';
+  static readonly initialState = {shardId:'', events:[]};
+  static async ingest(env: Env, shardId: string, event: VectorizedEvent): Promise<void> {
+    const shard = new this(env, shardId);
+    if (!(await shard.exists())) {
+      await shard.save({ shardId, events: [] });
+    }
+    await shard.mutate(s => ({
+      ...s,
+      events: [event, ...s.events].slice(0,500).sort((a,b)=> new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    }));
+  }
+  async search(embedding: number[], limit: number=10, threshold: number=0.7): Promise<SearchResult[]> {
+    const s = await this.getState();
+    const results: SearchResult[] = [];
+    for(const event of s.events) {
+      const score = cosineSimilarity(embedding, event.embedding);
+      if(score >= threshold) results.push({event, score});
+    }
+    return results.sort((a,b)=>b.score - a.score).slice(0,limit);
+  }
+}
+export class VectorIndexCoordinatorEntity extends IndexedEntity<{id:string}> {
+  static readonly entityName = 'vectorcoord';
+  static readonly indexName = 'vectorcoords';
+  static readonly singletonId = 'global';
+  static readonly initialState = {id:'global'};
+  static async ensureSeed(env: Env): Promise<void> {
+    const coord = new this(env, this.singletonId);
+    if (!(await coord.exists())) {
+      await coord.save(this.initialState);
+    }
+  }
+  async embedEvent(payloadOrText: string | Record<string,any>): Promise<number[]> {
+    return generateEmbedding(typeof payloadOrText==='string' ? payloadOrText : JSON.stringify(payloadOrText));
+  }
+  async querySemantic(env: Env, params: SemanticQueryParams): Promise<SemanticQueryResponse> {
+    const queryEmbedding = await this.embedEvent(params.text);
+    const { items: shards } = await VectorShardEntity.list(env, null, 100);
+    const allResults: SearchResult[] = [];
+    const searchPromises = shards.map(async (shardState) => {
+      const shard = new VectorShardEntity(env, shardState.shardId);
+      return shard.search(queryEmbedding, params.limit || 10, params.threshold || 0.7);
+    });
+    const resultsByShard = await Promise.all(searchPromises);
+    for (const results of resultsByShard) {
+      allResults.push(...results);
+    }
+    const sorted = allResults.sort((a,b)=>b.score - a.score).slice(0, params.limit||10);
+    return {results: sorted, total: allResults.length};
   }
 }
 export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
@@ -48,21 +124,24 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
     if (!(await di.exists())) {
       await di.save(this.initialState);
       const testEvents: IngestEvent[] = [
-        { idempotencyKey: 'test-traffic-1', feedId: 'f1', payload: {speed: 65, location: 'Test Route 22'}, clientSeq: Date.now() },
-        { idempotencyKey: 'test-weather-1', feedId: 'f2', payload: {temp: 72, condition: 'Clear'}, clientSeq: Date.now() + 1 },
-        { idempotencyKey: 'test-safety-1', feedId: 'f3', payload: {event: 'Test Dispatch', unit: '101'}, clientSeq: Date.now() + 2 },
+        { idempotencyKey: 'test-traffic-1', feedId: 'f1', payload: {speed: 25, location: 'major accident on Route 22'}, clientSeq: Date.now() },
+        { idempotencyKey: 'test-weather-1', feedId: 'f2', payload: {temp: 85, condition: 'Severe thunderstorm warning'}, clientSeq: Date.now() + 1 },
+        { idempotencyKey: 'test-safety-1', feedId: 'f3', payload: {event: 'Fire reported', unit: 'Engine 5'}, clientSeq: Date.now() + 2 },
+        { idempotencyKey: 'test-traffic-2', feedId: 'f5', payload: {speed: 65, location: 'traffic moving smoothly on I-78'}, clientSeq: Date.now() + 3 },
       ];
       for (const event of testEvents) {
         const day = new Date().toISOString().slice(0,10);
         const ts = event.clientSeq || Date.now();
         const id = event.idempotencyKey || uuidv4();
         const walKey = `wal/${day}/${ts}.${id}.json`;
-        const walEvent: WALEvent = {
+        const embedding = await generateEmbedding(JSON.stringify(event.payload));
+        const walEvent: VectorizedEvent = {
           _id: id,
           _seq: ts,
           feedId: event.feedId,
           payload: event.payload,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          embedding,
         };
         await this.appendToR2WAL(env, walKey, JSON.stringify(walEvent));
       }
@@ -78,11 +157,19 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
     }
   }
   async processEvent(key: string): Promise<boolean> {
-    const event = await this.getR2WALEvent(key);
+    const event = await this.getR2WALEvent(key) as VectorizedEvent;
     if (!event || !event._id) return false;
     const s = await this.getState();
     if (s.seenEvents.includes(event._id)) return false;
+    if (!event.embedding) {
+      event.embedding = await generateEmbedding(JSON.stringify(event.payload));
+    }
     await FeedEntity.ingest(this.env, event.feedId, event.payload);
+    const feed = await new FeedEntity(this.env, event.feedId).getState();
+    if (feed) {
+      const shardId = `${feed.region}-${feed.type.toLowerCase()}-${event.timestamp.slice(0,10)}`;
+      await VectorShardEntity.ingest(this.env, shardId, event);
+    }
     await this.mutate(cur => ({
       ...cur,
       seenEvents: [...cur.seenEvents, event._id].slice(-50000)
@@ -94,7 +181,6 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
     const { keys } = await DurabilityIndexEntity.listR2WAL(this.env, 'wal/', s.lastProcessed || undefined);
     let processed = 0;
     for (const key of keys) {
-      // listPrefix returns the full key including 'r2-wal/', so we strip it.
       const relativeKey = key.startsWith('r2-wal/') ? key.substring(7) : key;
       if (await this.processEvent(relativeKey)) {
         processed++;

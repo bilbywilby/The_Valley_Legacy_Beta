@@ -15,6 +15,7 @@ import { FeedsPage } from '@/pages/FeedsPage';
 import { FeedDetailPage } from '@/pages/FeedDetailPage';
 import { RootLayout } from '@/components/layout/RootLayout';
 import { WALPage } from '@/pages/WALPage';
+import { SearchPage } from '@/pages/SearchPage';
 const queryClient = new QueryClient();
 const router = createBrowserRouter([
   {
@@ -36,6 +37,10 @@ const router = createBrowserRouter([
       {
         path: "/wal",
         element: <WALPage />,
+      },
+      {
+        path: "/search",
+        element: <SearchPage />,
       },
     ]
   }

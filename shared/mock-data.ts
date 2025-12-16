@@ -1,4 +1,4 @@
-import type { FeedItem, FeedStats, VelocityDataPoint, HistoryItem } from './types';
+import type { FeedItem, FeedStats, VelocityDataPoint, HistoryItem, VectorizedEvent } from './types';
 export const MOCK_FEEDS: FeedItem[] = [
   { id: 'f1', name: 'Traffic - Route 22 West', type: 'Traffic', status: 'Online', region: 'Lehigh County', lastUpdate: new Date(Date.now() - 2 * 60 * 1000).toISOString() },
   { id: 'f2', name: 'Weather - Allentown', type: 'Weather', status: 'Online', region: 'Lehigh County', lastUpdate: new Date(Date.now() - 5 * 60 * 1000).toISOString() },
