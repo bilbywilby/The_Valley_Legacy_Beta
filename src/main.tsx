@@ -19,6 +19,7 @@ import { WALPage } from '@/pages/WALPage';
 import { SearchPage } from '@/pages/SearchPage';
 import { LandingPage } from '@/pages/LandingPage';
 import { PublicInfographicsPage } from '@/pages/PublicInfographicsPage';
+import { PublicPulsePage } from '@/pages/PublicPulsePage';
 const queryClient = new QueryClient();
 const router = createBrowserRouter([
   {
@@ -29,6 +30,11 @@ const router = createBrowserRouter([
   {
     path: "/public/infographics",
     element: <PublicInfographicsPage />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: "/public/pulse",
+    element: <PublicPulsePage />,
     errorElement: <RouteErrorBoundary />,
   },
   {

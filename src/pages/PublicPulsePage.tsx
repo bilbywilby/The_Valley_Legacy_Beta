@@ -9,10 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { ArrowRight, MapPin, Shield, Calendar, TrafficCone, CheckCircle, ImageOff, BookOpen } from 'lucide-react';
+import { ArrowRight, MapPin, Shield, Calendar, TrafficCone, CheckCircle, ImageOff } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { cn } from '@/lib/utils';
-import { MOCK_RESOURCES } from '@shared/mock-data';
 const ZScoreBadge = ({ score }: { score: number }) => {
   const isHigh = score > 1.5;
   const isLow = score < -1.5;
@@ -125,27 +124,6 @@ export function PublicPulsePage() {
                 </CardHeader>
                 <CardContent>
                   <LiveTile />
-                </CardContent>
-              </Card>
-              <Card className="glass">
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><BookOpen className="h-5 w-5 text-blue-400" /> Local Resources</CardTitle>
-                    <CardDescription>Discover essential services in your community.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="flex flex-wrap gap-2">
-                        {MOCK_RESOURCES.slice(0, 3).map(r => (
-                            <Button key={r.id} variant="ghost" size="sm" asChild className="h-auto text-left flex-grow">
-                                <Link to="/app/resources" className="flex flex-col items-start p-2">
-                                    <span className="font-semibold">{r.name}</span>
-                                    <span className="text-xs text-muted-foreground">{r.type}</span>
-                                </Link>
-                            </Button>
-                        ))}
-                    </div>
-                    <Button asChild className="mt-4 w-full bg-blue-500 hover:bg-blue-600">
-                        <Link to="/app/resources">Browse All Resources <ArrowRight className="ml-2 h-4 w-4"/></Link>
-                    </Button>
                 </CardContent>
               </Card>
             </motion.div>

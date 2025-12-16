@@ -129,13 +129,13 @@ export function WALPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Button
-                  onClick={handleApply}
-                  disabled={applyMutation.isLoading}
-                  className="w-full"
-                >
-                  <PlayCircle className="h-4 w-4 mr-2" />
-                  {applyMutation.isLoading ? 'Applying...' : 'Trigger Apply'}
+              <Button
+                onClick={handleApply}
+                disabled={applyMutation.isPending}
+                className="w-full"
+              >
+                <PlayCircle className="h-4 w-4 mr-2" />
+                {applyMutation.isPending ? 'Applying...' : 'Trigger Apply'}
                 </Button>
                 {applyMutation.data && (
                   <div className="mt-4 text-sm text-muted-foreground space-y-2">

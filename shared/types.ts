@@ -104,3 +104,25 @@ export interface SearchResponse extends SemanticQueryResponse {
   bm25Hits: number;
   fusionLat: number;
 }
+// --- Hyperlocal Civic API Types ---
+export interface PulseMetrics {
+  hex: string;
+  period: string;
+  safetyZ: number;
+  eventsZ: number;
+  trafficZ: number;
+  lastUpdated: string;
+}
+export interface CredResponse {
+  itemId: string;
+  score: number;
+  factors: {
+    sources: number;
+    corroborations: number;
+    ageHours: number;
+  };
+}
+export interface TileParams {
+  query: 'topics' | 'traffic' | 'sentiment';
+  window: string;
+}
