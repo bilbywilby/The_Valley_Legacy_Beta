@@ -4,7 +4,6 @@ enableMapSet();
 import { createRoot } from 'react-dom/client'
 import {
   createBrowserRouter,
-  Outlet,
   RouterProvider,
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -14,13 +13,8 @@ import '@/index.css'
 import { HomePage } from '@/pages/HomePage'
 import { FeedsPage } from '@/pages/FeedsPage';
 import { FeedDetailPage } from '@/pages/FeedDetailPage';
-import { AppLayout } from '@/components/layout/AppLayout';
+import { RootLayout } from '@/components/layout/RootLayout';
 const queryClient = new QueryClient();
-const RootLayout = () => (
-  <AppLayout>
-    <Outlet />
-  </AppLayout>
-);
 const router = createBrowserRouter([
   {
     element: <RootLayout />,

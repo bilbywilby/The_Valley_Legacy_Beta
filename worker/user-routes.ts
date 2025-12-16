@@ -1,15 +1,17 @@
 import { Hono } from "hono";
 import type { Env } from './core-utils';
-import { FeedEntity, CoordinatorEntity, RateLimitEntity } from "./entities";
+import { FeedEntity, CoordinatorEntity, RateLimitEntity, DurabilityIndexEntity } from "./entities";
 import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
+import { v4 as uuidv4 } from 'uuid';
+import { WALEvent } from "@shared/types";
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
     const ip = c.req.header('cf-connecting-ip') || 'anonymous';
     const rl = new RateLimitEntity(c.env, ip);
-    if (await rl.isLimited(60000, 10)) {
+    if (await rl.isLimited(60000, 100)) { // Increased limit for dev
       return bad(c, 'Rate limited');
     }
     await next();
@@ -72,9 +74,9 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
       const schema = schemas[feed.type as FeedType];
       if (!schema) return bad(c, `No validation schema for feed type: ${feed.type}`);
       schema.parse(payload);
-    } catch (e) {
+    } catch (e: unknown) {
       if (e instanceof ZodError) {
-        return bad(c, `Validation failed: ${e.errors.map(err => err.message).join(', ')}`);
+        return bad(c, `Validation failed: ${e.issues.map(err => err.message).join(', ')}`);
       }
       return bad(c, 'Invalid payload');
     }
@@ -90,6 +92,38 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     const { feedId, payload } = await c.req.json<{ feedId: string; payload: any }>();
     return handleIngest(c, feedId, payload);
   });
+  app.post('/api/ingest-wal', async (c) => {
+    const body = await c.req.json<{ feedId: string; payload: any; idempotencyKey?: string; clientSeq?: number }>();
+    const { feedId, payload, idempotencyKey, clientSeq } = body;
+    if (!isStr(feedId) || !payload) return bad(c, 'feedId and payload required');
+    const coord = new CoordinatorEntity(c.env, CoordinatorEntity.singletonId);
+    const feed = await coord.getFeed(feedId);
+    if (!feed) return notFound(c, 'Feed not found');
+    try {
+      const schema = schemas[feed.type as FeedType];
+      schema.parse(payload);
+    } catch (e: unknown) {
+      if (e instanceof ZodError) return bad(c, e.issues.map((issue) => issue.message).join(', '));
+      return bad(c, 'Invalid payload');
+    }
+    const _id = idempotencyKey || uuidv4();
+    const di = new DurabilityIndexEntity(c.env, DurabilityIndexEntity.singletonId);
+    const s = await di.getState();
+    if (s.seenEvents.includes(_id)) {
+      return c.json({ success: true, ackId: _id, alreadySeen: true }, 202);
+    }
+    const _seq = clientSeq ?? Date.now();
+    const event: WALEvent = { _id, _seq, feedId, payload, timestamp: new Date().toISOString() };
+    const ts = new Date().toISOString();
+    const dayKey = ts.slice(0, 10);
+    const walKey = `wal/${dayKey}/${_seq}.${_id}`;
+    const ackResp = c.json({ success: true, ackId: _id }, 202);
+    c.executionCtx.waitUntil((async () => {
+      await di.appendWAL(walKey, event);
+      await di.mutate((s) => ({ ...s, seenEvents: [...s.seenEvents, _id].slice(-50000) }));
+    })());
+    return ackResp;
+  });
   // Feeds List
   app.get('/api/feeds', async (c) => {
     const page = await FeedEntity.list(c.env, null, 100);
@@ -103,6 +137,8 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     if (!(await feedInstance.exists())) {
       return notFound(c, 'Feed not found');
     }
+    const di = new DurabilityIndexEntity(c.env, DurabilityIndexEntity.singletonId);
+    await di.replay();
     const feed = await feedInstance.getState();
     return ok(c, { feed });
   });

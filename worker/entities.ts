@@ -1,15 +1,16 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats } from "@shared/types";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
+import { v4 as uuidv4 } from 'uuid';
 export class RateLimitEntity extends IndexedEntity<RateLimitState> {
   static readonly entityName = "ratelimit";
   static readonly indexName = "ratelimits";
-  static readonly initialState: RateLimitState = { count: 0, resetTime: 0 };
+  static readonly initialState: RateLimitState = { id: '', count: 0, resetTime: 0 };
   async hit(): Promise<void> {
     await this.mutate(s => {
       const now = Date.now();
       if (now > s.resetTime) {
-        return { count: 1, resetTime: now + 60000 }; // 60s window
+        return { ...s, count: 1, resetTime: now + 60000 }; // 60s window
       }
       return { ...s, count: s.count + 1 };
     });
@@ -22,10 +23,68 @@ export class RateLimitEntity extends IndexedEntity<RateLimitState> {
     return s.count >= limit;
   }
 }
+export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
+  static readonly entityName = 'durindex';
+  static readonly indexName = 'durindexes';
+  static readonly singletonId = 'global';
+  static readonly initialState: DurabilityIndexState = { id: 'global', lastProcessed: '', seenEvents: [] };
+  static async ensureSeed(env: Env): Promise<void> {
+    const di = new this(env, this.singletonId);
+    if (!(await di.exists())) {
+      await di.save(this.initialState);
+      // Seed test WAL events only on first creation
+      const testEvents: WALEvent[] = [
+        { _id: 'test-traffic-1', _seq: Date.now(), feedId: 'f1', payload: {speed: 65, location: 'Test Route 22'}, timestamp: new Date().toISOString() },
+        { _id: 'test-weather-1', _seq: Date.now() + 1, feedId: 'f2', payload: {temp: 72, condition: 'Clear'}, timestamp: new Date().toISOString() },
+        { _id: 'test-safety-1', _seq: Date.now() + 2, feedId: 'f3', payload: {event: 'Test Dispatch', unit: '101'}, timestamp: new Date().toISOString() },
+      ];
+      const day = new Date().toISOString().slice(0,10);
+      for (const event of testEvents) {
+        const walKey = `wal/${day}/${event._seq}.${event._id}`;
+        await di.appendWAL(walKey, event);
+      }
+    }
+  }
+  async appendWAL(key: string, event: WALEvent): Promise<void> {
+    // In a real implementation, this would write to R2. Here we use the DO's storage.
+    await this.stub.ctx.storage.put(key, JSON.stringify(event));
+  }
+  async listWALKeys(afterKey?: string): Promise<string[]> {
+    const { keys } = await this.stub.listPrefix('wal/', afterKey);
+    return keys;
+  }
+  async getWALEvent(key: string): Promise<WALEvent | null> {
+    const json = await this.stub.ctx.storage.get<string>(key);
+    return json ? JSON.parse(json) as WALEvent : null;
+  }
+  async processEvent(key: string): Promise<boolean> {
+    const s = await this.getState();
+    const event = await this.getWALEvent(key);
+    if (!event || s.seenEvents.includes(event._id)) return false;
+    await FeedEntity.ingest(this.env, event.feedId, event.payload);
+    await this.mutate(cur => ({
+      ...cur,
+      seenEvents: [...cur.seenEvents, event._id].slice(-50000)
+    }));
+    return true;
+  }
+  async replay(): Promise<number> {
+    const s = await this.getState();
+    const keys = await this.listWALKeys(s.lastProcessed);
+    let processed = 0;
+    for (const key of keys) {
+      if (await this.processEvent(key)) processed++;
+    }
+    if (keys.length > 0) {
+      await this.patch({ lastProcessed: keys[keys.length - 1] });
+    }
+    return processed;
+  }
+}
 export class CoordinatorEntity extends IndexedEntity<CoordinatorState> {
   static readonly entityName = "coordinator";
   static readonly indexName = "coordinators"; // This is a singleton
-  static readonly initialState: CoordinatorState = { totalEvents: 0, buckets: {}, lastUpdate: '' };
+  static readonly initialState: CoordinatorState = { id: 'global', totalEvents: 0, buckets: {}, lastUpdate: '' };
   static readonly singletonId = "global";
   static async ensureSeed(env: Env): Promise<void> {
     const coord = new this(env, this.singletonId);
@@ -46,6 +105,8 @@ export class CoordinatorEntity extends IndexedEntity<CoordinatorState> {
     return (await feed.exists()) ? await feed.getState() : null;
   }
   async computeStats(): Promise<FeedStats & { velocity: VelocityDataPoint[] }> {
+    const di = new DurabilityIndexEntity(this.env, DurabilityIndexEntity.singletonId);
+    await di.replay();
     const { items: feeds } = await FeedEntity.list(this.env, null, 500);
     const s = await this.getState();
     const totalFeeds = feeds.length;
@@ -94,6 +155,7 @@ export class FeedEntity extends IndexedEntity<FeedState> {
   static async ensureSeed(env: Env): Promise<void> {
     await super.ensureSeed(env);
     await CoordinatorEntity.ensureSeed(env);
+    await DurabilityIndexEntity.ensureSeed(env);
   }
   static async ingest(env: Env, id: string, payload: Record<string, any>): Promise<void> {
     const feed = new this(env, id);
