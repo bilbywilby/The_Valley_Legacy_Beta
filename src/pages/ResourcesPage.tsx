@@ -88,6 +88,12 @@ export function ResourcesPage() {
           <main className="lg:col-span-3">
             <Card className="glass">
               <CardContent className="pt-6">
+                {filters.lat && filters.lon && (
+                  <Badge variant="secondary" className="mb-4">
+                    <MapPin className="h-3 w-3 mr-1.5" />
+                    Sorting by distance from your location
+                  </Badge>
+                )}
                 <div className="rounded-md border border-slate-800">
                   <Table>
                     <TableHeader><TableRow className="hover:bg-transparent border-b-slate-800"><TableHead>Name</TableHead><TableHead>Type</TableHead><TableHead>Rating</TableHead><TableHead>Spots</TableHead><TableHead className="hidden md:table-cell">Dist.</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>

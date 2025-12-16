@@ -428,7 +428,7 @@ export class ResourceEntity extends IndexedEntity<ResourceState> {
   };
   static seedData = MOCK_RESOURCES.map(r => ({ ...r, geoIndex: [`geo:${r.lat.toFixed(4)}:${r.lon.toFixed(4)}:5`] }));
   static async listFiltered(env: Env, filters: ResourceFilters): Promise<ResourceListResponse> {
-    const { items } = await this.list(env, null, 1000); // Fetch all for in-memory filter
+    const { items, next } = await this.list(env, null, 1000); // Fetch all for in-memory filter
     const filteredItems = items.map(item => {
       let dist_km: number | undefined = undefined;
       if (filters.lat && filters.lon) {
@@ -445,7 +445,7 @@ export class ResourceEntity extends IndexedEntity<ResourceState> {
       // Note: open_now filter is complex and would require parsing `hours` string, omitted in this stub.
       return true;
     });
-    return { items: filteredItems, next: null };
+    return { items: filteredItems, next: next ?? undefined };
   }
   static async shelters(env: Env, filters: ResourceFilters): Promise<ShelterListResponse> {
     const effectiveFilters: ResourceFilters = {
@@ -454,7 +454,7 @@ export class ResourceEntity extends IndexedEntity<ResourceState> {
     };
     const { items, next } = await this.listFiltered(env, effectiveFilters);
     const filteredByType = items.filter(i => ['shelter', 'food', 'clinic'].includes(i.type));
-    return { items: filteredByType, next };
+    return { items: filteredByType, next: next ?? undefined };
   }
   static async ingest(env: Env, payload: Resource): Promise<void> {
     const resource = new this(env, payload.id);
