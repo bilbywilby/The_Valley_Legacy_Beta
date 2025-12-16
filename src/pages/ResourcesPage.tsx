@@ -1,20 +1,21 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { Resource, ResourceFilters, ResourceListResponse, ResourceType } from '@shared/types';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Slider } from '@/components/ui/slider';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Star, MapPin, CheckCircle, XCircle, Users } from 'lucide-react';
+import { Star, MapPin, CheckCircle, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useDebounce, useGeolocation } from 'react-use';
+import { useDebounce } from 'react-use';
 const RESOURCE_TYPES: ResourceType[] = ['food', 'clinic', 'shelter', 'community', 'legal', 'other'];
 const LANGUAGES = ['en', 'es'];
 const ELIGIBILITY_TAGS = ['all', 'low-income', 'families', 'seniors', 'youth', 'homeless', 'hispanic-community'];
@@ -29,12 +30,6 @@ const StarRating = ({ rating }: { rating: number }) => (
 export function ResourcesPage() {
   const [filters, setFilters] = useState<ResourceFilters>({ min_rating: 0 });
   const [debouncedFilters, setDebouncedFilters] = useState<ResourceFilters>({});
-  const geoState = useGeolocation();
-  useEffect(() => {
-    if (!filters.lat && !filters.lon && geoState.latitude && geoState.longitude) {
-      setFilters(prev => ({ ...prev, lat: geoState.latitude, lon: geoState.longitude, radius: 20 }));
-    }
-  }, [geoState, filters.lat, filters.lon]);
   useDebounce(() => setDebouncedFilters(filters), 500, [filters]);
   const queryParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -88,24 +83,18 @@ export function ResourcesPage() {
           <main className="lg:col-span-3">
             <Card className="glass">
               <CardContent className="pt-6">
-                {filters.lat && filters.lon && (
-                  <Badge variant="secondary" className="mb-4">
-                    <MapPin className="h-3 w-3 mr-1.5" />
-                    Sorting by distance from your location
-                  </Badge>
-                )}
                 <div className="rounded-md border border-slate-800">
                   <Table>
-                    <TableHeader><TableRow className="hover:bg-transparent border-b-slate-800"><TableHead>Name</TableHead><TableHead>Type</TableHead><TableHead>Rating</TableHead><TableHead>Spots</TableHead><TableHead className="hidden md:table-cell">Dist.</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow className="hover:bg-transparent border-b-slate-800"><TableHead>Name</TableHead><TableHead>Type</TableHead><TableHead>Rating</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {isLoading ? (
                         Array.from({ length: 5 }).map((_, i) => (
-                          <TableRow key={i} className="border-slate-800"><TableCell colSpan={6}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                          <TableRow key={i} className="border-slate-800"><TableCell colSpan={4}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
                         ))
                       ) : error ? (
-                        <TableRow><TableCell colSpan={6} className="text-center text-destructive py-10">Failed to load resources.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={4} className="text-center text-destructive py-10">Failed to load resources.</TableCell></TableRow>
                       ) : data?.items?.length === 0 ? (
-                        <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-10">No resources match your filters.</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-10">No resources match your filters.</TableCell></TableRow>
                       ) : (
                         data?.items.map((resource, i) => (
                           <motion.tr key={resource.id} className="border-b border-slate-800 hover:bg-slate-900/50 transition-colors" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
@@ -115,15 +104,6 @@ export function ResourcesPage() {
                             </TableCell>
                             <TableCell><Badge variant="secondary" className="capitalize">{resource.type}</Badge></TableCell>
                             <TableCell><StarRating rating={resource.access_rating} /></TableCell>
-                            <TableCell>
-                              <Badge variant={resource.available_spots && resource.available_spots > 0 ? "default" : "outline"} className="flex items-center gap-1.5">
-                                <Users className="h-3 w-3" />
-                                {resource.available_spots ?? 0}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="hidden md:table-cell">
-                              {resource.dist_km !== undefined ? `${resource.dist_km.toFixed(1)} km` : '-'}
-                            </TableCell>
                             <TableCell>
                               {resource.verified ? <Badge variant="outline" className="border-emerald-500/30 text-emerald-400"><CheckCircle className="h-3 w-3 mr-1.5" />Verified</Badge> : <Badge variant="outline" className="border-amber-500/30 text-amber-400"><XCircle className="h-3 w-3 mr-1.5" />Unverified</Badge>}
                             </TableCell>

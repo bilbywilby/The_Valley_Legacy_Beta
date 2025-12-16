@@ -1,4 +1,4 @@
-import { LayoutDashboard, Radio, Database, Search } from "lucide-react";
+import { LayoutDashboard, Radio, Database, Search, BookOpen } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import {
   Sidebar,
@@ -47,6 +47,12 @@ export function AppSidebar(): JSX.Element {
             <NavLink to="/app/search" className={navLinkClasses}>
               <Search className="h-4 w-4" />
               Semantic Search
+            </NavLink>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <NavLink to="/app/resources" className={navLinkClasses}>
+              <BookOpen className="h-4 w-4" />
+              Community Resources
             </NavLink>
           </SidebarMenuItem>
         </SidebarMenu>
