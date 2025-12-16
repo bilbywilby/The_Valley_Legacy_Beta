@@ -69,7 +69,7 @@ export function FeedDetailPage() {
     ingestMutation.mutate(mockPayload);
   };
   const feed = data?.feed;
-  const severityData = feed?.history.reduce((acc, item) => {
+  const severityData = feed?.history?.reduce((acc, item) => {
     const severity = item.severity || 'info';
     const existing = acc.find(d => d.name === severity);
     if (existing) {
@@ -78,7 +78,15 @@ export function FeedDetailPage() {
       acc.push({ name: severity, value: 1 });
     }
     return acc;
-  }, [] as { name: string, value: number }[]);
+  }, [] as { name: string, value: number }[]) ?? [];
+  const overviewChartData = (feed?.history || [])
+    .slice(0, 20)
+    .reverse()
+    .map(item => ({
+      timestamp: item.timestamp,
+      speed: item.payload?.speed ? parseFloat(item.payload.speed) : null,
+      temp: item.payload?.temp ? parseFloat(item.payload.temp) : null,
+    }));
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <Toaster richColors theme="dark" />
@@ -115,8 +123,8 @@ export function FeedDetailPage() {
           transition={{ duration: 0.5 }}
         >
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <StatCard title="Ingestion Rate" value={isLoading ? 0 : `${feed?.ingestionRate.toFixed(2)}/hr`} icon={<Rss className="h-5 w-5" />} isLoading={isLoading} />
-            <StatCard title="Total Events" value={isLoading ? 0 : feed?.totalEvents.toLocaleString() ?? 0} icon={<Database className="h-5 w-5" />} isLoading={isLoading} />
+            <StatCard title="Ingestion Rate" value={isLoading ? 0 : `${(feed?.ingestionRate ?? 0).toFixed(2)}/hr`} icon={<Rss className="h-5 w-5" />} isLoading={isLoading} />
+            <StatCard title="Total Events" value={isLoading ? 0 : feed?.totalEvents?.toLocaleString() ?? '0'} icon={<Database className="h-5 w-5" />} isLoading={isLoading} />
             <StatCard title="Last Event" value={isLoading ? '...' : formatDistanceToNow(new Date(feed?.lastUpdate ?? 0), { addSuffix: true })} icon={<Clock className="h-5 w-5" />} isLoading={isLoading} />
             <StatCard title="Health" value={isLoading ? '...' : feed?.status ?? 'Unknown'} icon={<BarChart className="h-5 w-5" />} isLoading={isLoading} />
           </div>
@@ -132,14 +140,17 @@ export function FeedDetailPage() {
                 <CardHeader><CardTitle>Recent Activity</CardTitle></CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <AreaChart data={feed?.history.slice(0, 20).reverse()}>
-                      <defs><linearGradient id="colorEvents" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.8} /><stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} /></linearGradient></defs>
+                    <AreaChart data={overviewChartData}>
+                      <defs>
+                        <linearGradient id="colorEvents" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.8} /><stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} /></linearGradient>
+                        <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="hsl(var(--chart-2))" stopOpacity={0.8} /><stop offset="95%" stopColor="hsl(var(--chart-2))" stopOpacity={0} /></linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border) / 0.5)" />
                       <XAxis dataKey="timestamp" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(str) => format(new Date(str), 'HH:mm')} />
                       <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} domain={['dataMin - 1', 'dataMax + 1']} hide={true} />
                       <Tooltip contentStyle={{ backgroundColor: "hsl(var(--background))", borderColor: "hsl(var(--border))" }} labelFormatter={(label) => format(new Date(label), 'PPpp')} />
-                      <Area type="monotone" dataKey="payload.speed" name="Speed (mph)" stroke="hsl(var(--chart-1))" fill="url(#colorEvents)" />
-                      <Area type="monotone" dataKey="payload.temp" name="Temp (°F)" stroke="hsl(var(--chart-2))" fill="url(#colorTemp)" />
+                      <Area type="monotone" dataKey="speed" name="Speed (mph)" stroke="hsl(var(--chart-1))" fill="url(#colorEvents)" />
+                      <Area type="monotone" dataKey="temp" name="Temp (°F)" stroke="hsl(var(--chart-2))" fill="url(#colorTemp)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </CardContent>
