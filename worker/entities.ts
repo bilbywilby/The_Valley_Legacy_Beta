@@ -2,6 +2,8 @@ import { IndexedEntity, Env } from "./core-utils";
 import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
+// Define Doc type locally to assist TypeScript inference where needed.
+type Doc<T> = { v: number; data: T };
 export class RateLimitEntity extends IndexedEntity<RateLimitState> {
   static readonly entityName = "ratelimit";
   static readonly indexName = "ratelimits";
@@ -38,7 +40,7 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
   }
   static async getR2WAL(env: Env, key: string): Promise<string | null> {
     const di = new this(env, this.singletonId);
-    const doc = await di.stub.getDoc<string>('r2-wal/' + key);
+    const doc = await di.stub.getDoc('r2-wal/' + key) as Doc<string> | null;
     return doc?.data ?? null;
   }
   static async ensureSeed(env: Env): Promise<void> {
@@ -67,7 +69,7 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
     }
   }
   async getR2WALEvent(key: string): Promise<WALEvent | null> {
-    const content = await DurabilityIndexEntity.getR2WAL(this.env, key);
+    const content: string | null = await DurabilityIndexEntity.getR2WAL(this.env, key);
     try {
       return content ? JSON.parse(content) as WALEvent : null;
     } catch (e) {
