@@ -17,10 +17,18 @@ export function HomePage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div className="py-8 md:py-10 lg:py-12">
         <header className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Command Dashboard</h1>
-          <p className="text-muted-foreground mt-1">
-            A high-level overview of the Lehigh Valley intelligence feed.
-          </p>
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-foreground">Command Dashboard</h1>
+              <p className="text-muted-foreground mt-1">
+                A high-level overview of the Lehigh Valley intelligence feed.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-emerald-500/30 text-emerald-400">
+              <ShieldCheck className="h-3 w-3 mr-1.5" />
+              Protected Dashboard
+            </Badge>
+          </div>
         </header>
         <main className="space-y-8">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -117,7 +125,7 @@ export function HomePage() {
           </div>
         </main>
         <footer className="text-center text-muted-foreground/80 mt-12">
-            <p>Built with ❤️ at Cloudflare</p>
+            <p>Built with ��️ at Cloudflare</p>
         </footer>
       </div>
     </div>

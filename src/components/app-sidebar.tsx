@@ -26,25 +26,25 @@ export function AppSidebar(): JSX.Element {
       <SidebarContent>
         <SidebarMenu>
           <SidebarMenuItem>
-            <NavLink to="/" className={navLinkClasses}>
+            <NavLink to="/app" end className={navLinkClasses}>
               <LayoutDashboard className="h-4 w-4" />
               Command Dashboard
             </NavLink>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <NavLink to="/feeds" className={navLinkClasses}>
+            <NavLink to="/app/feeds" className={navLinkClasses}>
               <Radio className="h-4 w-4" />
               Feed Explorer
             </NavLink>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <NavLink to="/wal" className={navLinkClasses}>
+            <NavLink to="/app/wal" className={navLinkClasses}>
               <Database className="h-4 w-4" />
               WAL Explorer
             </NavLink>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <NavLink to="/search" className={navLinkClasses}>
+            <NavLink to="/app/search" className={navLinkClasses}>
               <Search className="h-4 w-4" />
               Semantic Search
             </NavLink>
