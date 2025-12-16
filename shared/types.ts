@@ -36,7 +36,7 @@ export interface VelocityDataPoint {
   events: number;
 }
 export interface CoordinatorState {
-  id: string;
+  id:string;
   totalEvents: number;
   buckets: Record<string, number>; // hourKey -> count
   lastUpdate: string;
@@ -74,20 +74,33 @@ export interface IngestEvent {
   clientSeq?: number;
 }
 export type R2WALContent = string; // JSON string for simulated R2 objects
-// --- Phase 9: Vector Search Types ---
+// --- Vector Search & Fusion Types ---
 export interface VectorizedEvent extends WALEvent {
   embedding: number[]; // 128-dim mock vector [-1,1]
 }
 export interface SearchResult {
   event: VectorizedEvent;
-  score: number; // cosine similarity [0,1]
-}
-export interface SemanticQueryResponse {
-  results: SearchResult[];
-  total: number;
+  score: number; // cosine similarity or fused score [0,1]
 }
 export interface SemanticQueryParams {
   text: string;
   limit?: number;
   threshold?: number;
+}
+export interface SemanticQueryResponse {
+  results: SearchResult[];
+  total: number;
+}
+export interface BM25Result {
+  docId: string;
+  score: number;
+}
+export interface FusionParams extends Omit<SemanticQueryParams, 'text'> {
+  q: string;
+  alpha?: number;
+  beta?: number;
+}
+export interface SearchResponse extends SemanticQueryResponse {
+  bm25Hits: number;
+  fusionLat: number;
 }

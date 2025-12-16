@@ -1,5 +1,5 @@
 import { IndexedEntity, Env } from "./core-utils";
-import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse } from "@shared/types";
+import type { FeedState, HistoryItem, CoordinatorState, RateLimitState, VelocityDataPoint, FeedStats, DurabilityIndexState, WALEvent, IngestEvent, VectorizedEvent, SearchResult, SemanticQueryParams, SemanticQueryResponse, FusionParams, BM25Result } from "@shared/types";
 import { MOCK_FEEDS, MOCK_FEED_HISTORY, MOCK_VECTOR_SHARDS } from "@shared/mock-data";
 import { v4 as uuidv4 } from 'uuid';
 // Define Doc type locally to assist TypeScript inference where needed.
@@ -45,6 +45,52 @@ export class RateLimitEntity extends IndexedEntity<RateLimitState> {
       return false;
     }
     return s.count >= limit;
+  }
+}
+export class BM25IndexEntity extends IndexedEntity<{id: string, postings: Record<string, string[]>}> {
+  static readonly entityName = 'bm25idx';
+  static readonly indexName = 'bm25indexes';
+  static readonly singletonId = 'global';
+  static readonly initialState = {id: 'global', postings: {}};
+  static async ensureSeed(env: Env): Promise<void> {
+    const idx = new this(env, this.singletonId);
+    if (!(await idx.exists())) {
+      await idx.save(this.initialState);
+    }
+  }
+  static tokenizer(text: string): string[] {
+    return (text.toLowerCase().match(/\w+/g) || []).filter(token => token.length > 2); // Basic tokenizer
+  }
+  static async ingestTokens(env: Env, docId: string, tokens: string[]): Promise<void> {
+    if (tokens.length === 0) return;
+    const idx = new this(env, this.singletonId);
+    await idx.mutate(s => {
+      const newPostings = { ...s.postings };
+      for (const token of tokens) {
+        const currentDocs = newPostings[token] || [];
+        if (!currentDocs.includes(docId)) {
+          newPostings[token] = [docId, ...currentDocs].slice(0, 1000);
+        }
+      }
+      return { ...s, postings: newPostings };
+    });
+  }
+  static async searchCandidates(env: Env, queryTokens: string[], limit: number = 50): Promise<BM25Result[]> {
+    const idx = new this(env, this.singletonId);
+    const s = await idx.getState();
+    const candidates: Record<string, number> = {};
+    for (const token of queryTokens) {
+      const docs = s.postings[token] || [];
+      for (const docId of docs) {
+        candidates[docId] = (candidates[docId] || 0) + 1; // Simple scoring: term frequency
+      }
+    }
+    // Normalize score by number of query tokens
+    const numTokens = queryTokens.length || 1;
+    return Object.entries(candidates)
+      .map(([docId, score]): BM25Result => ({ docId, score: score / numTokens }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
   }
 }
 export class VectorShardEntity extends IndexedEntity<{id: string, events: VectorizedEvent[]}> {
@@ -103,6 +149,32 @@ export class VectorIndexCoordinatorEntity extends IndexedEntity<{id:string}> {
     }
     const sorted = allResults.sort((a,b)=>b.score - a.score).slice(0, params.limit||10);
     return {results: sorted, total: allResults.length};
+  }
+  async queryHybrid(env: Env, params: FusionParams): Promise<SemanticQueryResponse> {
+    const { q, alpha = 0.5, beta = 0.5, limit = 20, threshold = 0.7 } = params;
+    const queryTokens = BM25IndexEntity.tokenizer(q);
+    const [bm25Candidates, vectorResponse] = await Promise.all([
+      BM25IndexEntity.searchCandidates(env, queryTokens, 50),
+      this.querySemantic(env, { text: q, limit: 50, threshold: threshold - 0.2 }) // lower threshold for wider net
+    ]);
+    const fusedScores: Record<string, { event: VectorizedEvent, score: number }> = {};
+    const vectorScoreMap = new Map(vectorResponse.results.map(r => [r.event._id, { event: r.event, score: r.score }]));
+    // Add all vector results to the fusion pool
+    for (const [id, { event, score }] of vectorScoreMap.entries()) {
+      fusedScores[id] = { event, score: (fusedScores[id]?.score || 0) + beta * score };
+    }
+    // Add all BM25 results
+    for (const cand of bm25Candidates) {
+      const event = vectorScoreMap.get(cand.docId)?.event || { _id: cand.docId, payload: { "retrieved_by": "bm25" } } as any;
+      fusedScores[cand.docId] = {
+        event,
+        score: (fusedScores[cand.docId]?.score || 0) + alpha * cand.score
+      };
+    }
+    const finalResults: SearchResult[] = Object.values(fusedScores)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+    return { results: finalResults, total: finalResults.length };
   }
 }
 export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
@@ -174,6 +246,9 @@ export class DurabilityIndexEntity extends IndexedEntity<DurabilityIndexState> {
       const shardId = `${feed.region}-${feed.type.toLowerCase()}-${event.timestamp.slice(0,10)}`;
       await VectorShardEntity.ingest(this.env, shardId, event);
     }
+    // Also ingest into BM25 index
+    const tokens = BM25IndexEntity.tokenizer(JSON.stringify(event.payload));
+    await BM25IndexEntity.ingestTokens(this.env, event._id, tokens);
     await this.mutate(cur => ({
       ...cur,
       seenEvents: [...cur.seenEvents, event._id].slice(-50000)
@@ -273,13 +348,13 @@ export class FeedEntity extends IndexedEntity<FeedState> {
   }
   static async ingest(env: Env, id: string, payload: Record<string, any>): Promise<void> {
     const feed = new this(env, id);
+    const now = new Date().toISOString();
+    const newHistoryItem: HistoryItem = {
+      timestamp: now,
+      payload,
+      severity: payload.severity || 'info',
+    };
     await feed.mutate(s => {
-      const now = new Date().toISOString();
-      const newHistoryItem: HistoryItem = {
-        timestamp: now,
-        payload,
-        severity: payload.severity || 'info',
-      };
       const newHistory = [newHistoryItem, ...s.history].slice(0, 100);
       const totalEvents = (s.totalEvents || s.history.length) + 1;
       // Simple ingestion rate: events in last hour
@@ -297,8 +372,7 @@ export class FeedEntity extends IndexedEntity<FeedState> {
     });
     // Notify coordinator
     const coord = new CoordinatorEntity(env, CoordinatorEntity.singletonId);
-    const now = Date.now();
-    const hourKey = `${Math.floor(now / 3600000)}`;
+    const hourKey = `${Math.floor(Date.now() / 3600000)}`;
     await coord.incrEvent(hourKey);
   }
 }
