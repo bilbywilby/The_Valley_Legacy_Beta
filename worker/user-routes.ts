@@ -5,7 +5,7 @@ import { ok, bad, notFound, isStr } from './core-utils';
 import { schemas, FeedType } from "@shared/schemas";
 import { ZodError } from "zod";
 import { v4 as uuidv4 } from 'uuid';
-import { WALEvent, WALStats } from "@shared/types";
+import { WALEvent, WALStats, IngestEvent } from "@shared/types";
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
   // Middleware
   const rateLimit = async (c: any, next: any) => {
@@ -42,7 +42,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.use('/api/*', rateLimit);
   app.use('/api/ingest*', authStub);
   app.use('/api/coordinator/ingest*', authStub);
-  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/wal']));
+  app.use('/api/*', cachedGet(['/api/feeds', '/api/dashboard/stats', '/api/dashboard/velocity', '/api/coordinator/stats', '/api/list-wal', '/api/read-wal']));
   // Ensure seed data is present on first load
   app.use('/api/*', async (c, next) => {
     await FeedEntity.ensureSeed(c.env);
@@ -67,35 +67,8 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     const stats = await coord.computeStats();
     return ok(c, stats);
   });
-  const handleIngest = async (c: any, feedId: string, payload: any) => {
-    if (!isStr(feedId) || !payload) return bad(c, 'feedId and payload required');
-    const coord = new CoordinatorEntity(c.env, CoordinatorEntity.singletonId);
-    const feed = await coord.getFeed(feedId);
-    if (!feed) return notFound(c, 'Feed not found');
-    try {
-      const schema = schemas[feed.type as FeedType];
-      if (!schema) return bad(c, `No validation schema for feed type: ${feed.type}`);
-      schema.parse(payload);
-    } catch (e: unknown) {
-      if (e instanceof ZodError) {
-        return bad(c, `Validation failed: ${e.issues.map(err => err.message).join(', ')}`);
-      }
-      return bad(c, 'Invalid payload');
-    }
-    await FeedEntity.ingest(c.env, feedId, payload);
-    return ok(c, { success: true });
-  };
-  app.post('/api/coordinator/ingest/:feedId', async (c) => {
-    const feedId = c.req.param('feedId');
-    const { payload } = await c.req.json();
-    return handleIngest(c, feedId, payload);
-  });
   app.post('/api/ingest', async (c) => {
-    const { feedId, payload } = await c.req.json<{ feedId: string; payload: any }>();
-    return handleIngest(c, feedId, payload);
-  });
-  app.post('/api/ingest-wal', async (c) => {
-    const body = await c.req.json<{ feedId: string; payload: any; idempotencyKey?: string; clientSeq?: number }>();
+    const body: IngestEvent = await c.req.json();
     const { feedId, payload, idempotencyKey, clientSeq } = body;
     if (!isStr(feedId) || !payload) return bad(c, 'feedId and payload required');
     const coord = new CoordinatorEntity(c.env, CoordinatorEntity.singletonId);
@@ -116,12 +89,11 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
     }
     const _seq = clientSeq ?? Date.now();
     const event: WALEvent = { _id, _seq, feedId, payload, timestamp: new Date().toISOString() };
-    const ts = new Date().toISOString();
-    const dayKey = ts.slice(0, 10);
-    const walKey = `wal/${dayKey}/${_seq}.${_id}`;
+    const dayKey = event.timestamp.slice(0, 10);
+    const walKey = `wal/${dayKey}/${_seq}.${_id}.json`;
     const ackResp = c.json({ success: true, ackId: _id }, 202);
     c.executionCtx.waitUntil((async () => {
-      await di.appendWAL(walKey, event);
+      await DurabilityIndexEntity.appendToR2WAL(c.env, walKey, JSON.stringify(event));
       await di.mutate((s) => ({ ...s, seenEvents: [...s.seenEvents, _id].slice(-50000) }));
     })());
     return ackResp;
@@ -140,7 +112,7 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
       return notFound(c, 'Feed not found');
     }
     const di = new DurabilityIndexEntity(c.env, DurabilityIndexEntity.singletonId);
-    await di.replay();
+    await di.applyWAL();
     const feed = await feedInstance.getState();
     return ok(c, { feed });
   });
@@ -148,17 +120,27 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
   app.post('/api/feeds/:id/ingest', authStub, async (c) => {
     const id = c.req.param('id');
     const { payload } = await c.req.json();
-    return handleIngest(c, id, payload);
+    if (!isStr(id) || !payload) return bad(c, 'feedId and payload required');
+    await FeedEntity.ingest(c.env, id, payload);
+    return ok(c, { success: true });
   });
-  // WAL Routes
-  app.get('/api/wal', async (c) => {
+  // R2-Simulated WAL Routes
+  app.get('/api/list-wal', async (c) => {
+    const prefix = c.req.query('prefix') || '';
     const after = c.req.query('after');
-    const res = await DurabilityIndexEntity.listWALKeys(c.env, after ?? undefined);
+    const res = await DurabilityIndexEntity.listR2WAL(c.env, prefix, after || undefined);
     return ok(c, res);
   });
-  app.post('/api/wal/replay', async (c) => {
+  app.get('/api/read-wal', async (c) => {
+    const key = c.req.query('key');
+    if (!isStr(key)) return bad(c, 'key required');
+    const content = await DurabilityIndexEntity.getR2WAL(c.env, key);
+    if (content === null) return notFound(c, 'key not found');
+    return ok(c, { content });
+  });
+  app.post('/api/apply-wal', async (c) => {
     const di = new DurabilityIndexEntity(c.env, DurabilityIndexEntity.singletonId);
-    const processed = await di.replay();
+    const processed = await di.applyWAL();
     const s = await di.getState();
     return ok(c, { processed, lastProcessed: s.lastProcessed, totalSeen: s.seenEvents.length } as WALStats);
   });
