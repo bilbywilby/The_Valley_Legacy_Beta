@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api-client';
 import { WALListResponse, WALStats } from '@shared/types';
@@ -7,17 +8,28 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PlayCircle, FileKey } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
+import { Input } from '@/components/ui/input';
 export function WALPage() {
   const queryClient = useQueryClient();
+  const [prefix, setPrefix] = useState('');
+  const [after, setAfter] = useState('');
   const { data, isLoading, error } = useQuery<WALListResponse>({
-    queryKey: ['wal'],
-    queryFn: () => api('/api/list-wal'),
+    queryKey: ['wal', { prefix, after }],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (prefix) params.set('prefix', prefix);
+      if (after) params.set('after', after);
+      const queryString = params.toString();
+      return api(`/api/list-wal${queryString ? `?${queryString}` : ''}`);
+    },
     refetchInterval: 20000,
   });
   const applyMutation = useMutation({
     mutationFn: () => api<WALStats>('/api/apply-wal', { method: 'POST' }),
     onSuccess: (stats) => {
       toast.success(`Apply complete. Processed ${stats.processed} new events.`);
+      setPrefix('');
+      setAfter('');
       queryClient.invalidateQueries({ queryKey: ['wal'] });
       queryClient.invalidateQueries({ queryKey: ['coordinatorStats'] });
       queryClient.invalidateQueries({ queryKey: ['feeds'] });
@@ -50,6 +62,15 @@ export function WALPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <Input
+                  placeholder="Filter by prefix (e.g., wal/2025-)..."
+                  value={prefix}
+                  onChange={(e) => {
+                    setPrefix(e.target.value);
+                    setAfter(''); // Reset pagination on new filter
+                  }}
+                  className="mb-4 max-w-sm"
+                />
                 <div className="rounded-md border border-slate-800">
                   <Table>
                     <TableHeader>
@@ -84,17 +105,22 @@ export function WALPage() {
                       ) : (
                         data?.keys.map(key => (
                           <TableRow key={key} className="border-slate-800 hover:bg-slate-900/50 transition-colors">
-                            <TableCell className="font-mono text-xs">{key}</TableCell>
+                            <TableCell className="font-mono text-xs break-all">{key}</TableCell>
                           </TableRow>
                         ))
                       )}
                     </TableBody>
                   </Table>
                 </div>
+                {data?.next && (
+                  <Button onClick={() => setAfter(data.next!)} variant="outline" className="mt-4 w-full">
+                    Load More
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
-          <div>
+          <div className="lg:col-span-1">
             <Card className="bg-slate-950/50 border-slate-800 sticky top-24">
               <CardHeader>
                 <CardTitle>Manual Apply</CardTitle>
